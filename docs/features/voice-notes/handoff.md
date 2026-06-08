@@ -44,6 +44,16 @@ Tests/quality: `pytest -q`, `ruff check src tests`, `mypy`.
     and Deepgram **live websocket event signatures**.
   - The bench-off on a real voice sample (latency + WER comparison).
 
+## QA remediation (post first Codex pass)
+- **Committed `.env ` secret** — untracked + ignored (`.env*`), pushed; key must be
+  rotated by the user (still in history). The committed-secret blocker is resolved.
+- **FTS search crash** — `storage.search()` now tokenizes+quotes the query and
+  guards with try/except; spoken queries with operators/quotes can't crash the
+  daemon (+2 regression tests).
+- `.claude/settings.local.json` untracked + gitignored.
+- Added `stop_to_final_ms` latency metric + bench cost-estimate column.
+- ADR 0003 documents the rule-based-routing design deviation.
+
 ## Known risks
 - **Deepgram streaming event handler** (`_DeepgramStreamingSession`) is coded to
   the v3 SDK contract but unexercised against a live socket — the `is_final` /
