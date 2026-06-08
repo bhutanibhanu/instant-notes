@@ -243,6 +243,9 @@ class InstantNotesDaemon:
                 except Exception:
                     pass
                 self._session = None
+            # Finalize a dictation trace abandoned mid-recording (no leak).
+            tracer.finalize(self._sid)
+            self._sid = None
             # Close any backend that holds connections (pooled httpx, etc.).
             close = getattr(self._backend, "close", None)
             if callable(close):
