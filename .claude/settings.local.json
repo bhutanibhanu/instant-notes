@@ -13,6 +13,17 @@
       "Bash(mkdir:*)",
       "Bash(ls:*)",
       "Bash(cat:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/secrets/**)",
+      "Read(**/*credential*)",
+      "Read(**/id_rsa)",
+      "Read(**/.ssh/**)",
+      "Bash(rm -rf *)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)"
     ]
   }
 }
