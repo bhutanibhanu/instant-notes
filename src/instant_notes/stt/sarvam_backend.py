@@ -70,17 +70,15 @@ class SarvamBackend(STTBackend):
     def transcribe(self, audio: AudioData) -> TranscriptionResult:
         metrics = STTMetrics.start(self.name, audio.duration_ms)
         chunks = self._split(audio)
-        parts: list[str] = []
-        last_payload: Any = {}
-        for i, chunk in enumerate(chunks):
-            payload = self._transcribe_chunk(chunk)
-            if i == 0:
-                metrics.mark_first_token()
-            last_payload = payload
-            if isinstance(payload, dict):
-                t = (payload.get("transcript") or "").strip()
-                if t:
-                    parts.append(t)
+        # STT chunks are independent → run concurrently (latency = slowest, not sum).
+        payloads = self._parallel_map(self._transcribe_chunk, chunks)
+        metrics.mark_first_token()
+        last_payload: Any = payloads[-1] if payloads else {}
+        parts = [
+            (p.get("transcript") or "").strip()
+            for p in payloads
+            if isinstance(p, dict) and (p.get("transcript") or "").strip()
+        ]
 
         text = " ".join(parts).strip()
         if self.output_script == "roman" and text:
@@ -97,28 +95,42 @@ class SarvamBackend(STTBackend):
 
     def _romanize(self, text: str) -> str:
         """Transliterate Devanagari Hinglish -> natural romanized Hinglish via
-        Sarvam's transliterate API (chunked on spaces under the input cap)."""
+        Sarvam's transliterate API (chunked on spaces, run concurrently)."""
+        chunks = self._split_text(text, SARVAM_TRANSLIT_MAX_CHARS)
+        out = self._parallel_map(self._transliterate_chunk, chunks)
+        return " ".join(p for p in out if p).strip()
+
+    def _transliterate_chunk(self, chunk: str) -> str:
         headers = {
             "api-subscription-key": self.api_key,
             "Content-Type": "application/json",
         }
-        out: list[str] = []
-        for chunk in self._split_text(text, SARVAM_TRANSLIT_MAX_CHARS):
-            resp = self._http().post(
-                SARVAM_TRANSLITERATE_URL,
-                headers=headers,
-                json={
-                    "input": chunk,
-                    "source_language_code": "hi-IN",
-                    "target_language_code": "en-IN",
-                    "spoken_form": True,
-                },
-            )
-            resp.raise_for_status()
-            payload = self._parse_json(resp)
-            if isinstance(payload, dict):
-                out.append(payload.get("transliterated_text") or "")
-        return " ".join(p for p in out if p).strip()
+        resp = self._http().post(
+            SARVAM_TRANSLITERATE_URL,
+            headers=headers,
+            json={
+                "input": chunk,
+                "source_language_code": "hi-IN",
+                "target_language_code": "en-IN",
+                "spoken_form": True,
+            },
+        )
+        resp.raise_for_status()
+        payload = self._parse_json(resp)
+        if not isinstance(payload, dict):
+            return ""
+        return payload.get("transliterated_text") or ""
+
+    @staticmethod
+    def _parallel_map(fn, items: list):
+        """Map fn over items concurrently, preserving order. httpx.Client is
+        thread-safe, so the pooled client is shared across worker threads."""
+        if len(items) <= 1:
+            return [fn(x) for x in items]
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(len(items), 8)) as pool:
+            return list(pool.map(fn, items))
 
     @staticmethod
     def _split_text(text: str, max_chars: int) -> list[str]:
