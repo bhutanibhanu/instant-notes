@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 def word_error_rate(reference: str, hypothesis: str) -> float:
@@ -33,6 +32,6 @@ class BenchResult:
     backend: str
     text: str
     total_ms: float
-    first_token_ms: Optional[float]
+    first_token_ms: float | None
     realtime_factor: float
-    wer: Optional[float] = None
+    wer: float | None = None

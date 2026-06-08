@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 from .config import Config
 from .storage import Note, NoteStore
@@ -123,7 +122,7 @@ class NoteAssistant:
         return self._handle_ask(raw)
 
     # -- query extraction --------------------------------------------------
-    def _extract_search_query(self, text: str) -> Optional[str]:
+    def _extract_search_query(self, text: str) -> str | None:
         for pat in _SEARCH_PATTERNS:
             m = pat.search(text)
             if m:
@@ -204,7 +203,7 @@ class NoteAssistant:
         snippet = joined[:280] + ("…" if len(joined) > 280 else "")
         return f"You have {n} note{'s' if n != 1 else ''}. {snippet}".strip()
 
-    def _call_claude(self, prompt: str) -> Optional[str]:
+    def _call_claude(self, prompt: str) -> str | None:
         """Call the Messages API; return text or ``None`` on any error."""
         client = self.client
         if client is None:
@@ -220,7 +219,7 @@ class NoteAssistant:
             return None
 
     @staticmethod
-    def _extract_text(resp) -> Optional[str]:
+    def _extract_text(resp) -> str | None:
         content = getattr(resp, "content", None)
         if not content:
             return None

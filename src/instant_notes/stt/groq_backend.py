@@ -22,6 +22,7 @@ class GroqBackend(STTBackend):
     def __init__(self, api_key: str, model: str = "whisper-large-v3-turbo") -> None:
         self.api_key = api_key
         self.model = model
+        self._client = None  # cached Groq client (connection reuse)
 
     def is_available(self) -> bool:
         try:
@@ -30,11 +31,16 @@ class GroqBackend(STTBackend):
             return False
         return bool(self.api_key)
 
-    def transcribe(self, audio: AudioData) -> TranscriptionResult:
-        from groq import Groq
+    def _groq(self):
+        if self._client is None:
+            from groq import Groq
 
+            self._client = Groq(api_key=self.api_key)
+        return self._client
+
+    def transcribe(self, audio: AudioData) -> TranscriptionResult:
         wav_bytes = audio.to_wav_bytes()
-        client = Groq(api_key=self.api_key)
+        client = self._groq()
 
         metrics = STTMetrics.start(self.name, audio.duration_ms)
         resp = client.audio.transcriptions.create(

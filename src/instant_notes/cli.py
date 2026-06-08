@@ -10,9 +10,8 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 from instant_notes import __version__
 from instant_notes.config import load_config
@@ -61,7 +60,7 @@ def _cmd_start(args) -> int:
     return 0
 
 
-def _format_note_line(note: Note) -> str:
+def _format_note_line(note: Note) -> tuple[str, str, str]:
     ts = note.created_at.astimezone().strftime("%Y-%m-%d %H:%M")
     return ts, note.source_backend or "?", note.text
 
@@ -127,7 +126,7 @@ def _cmd_bench(args) -> int:
         print("No backends could be built.")
         return 1
 
-    reference: Optional[str] = None
+    reference: str | None = None
     if args.reference:
         ref_path = Path(args.reference)
         if not ref_path.exists():
@@ -141,7 +140,7 @@ def _cmd_bench(args) -> int:
 
     out_dir = Path("docs/benchmarks")
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out_path = out_dir / f"{stamp}.md"
     out_path.write_text(report, encoding="utf-8")
     print(f"\nReport saved to {out_path}")
@@ -161,7 +160,7 @@ _DISPATCH = {
 }
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     handler = _DISPATCH[args.command]

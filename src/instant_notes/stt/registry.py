@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 BACKEND_NAMES = ["faster-whisper", "sarvam", "groq", "deepgram"]
 
 
-def build_backend(name: str, cfg: "Config") -> "STTBackend":
+def build_backend(name: str, cfg: Config) -> STTBackend:
     """Instantiate a backend by name using values from ``cfg``."""
     if name == "faster-whisper":
         from instant_notes.stt.faster_whisper_backend import FasterWhisperBackend
@@ -45,6 +45,6 @@ def build_backend(name: str, cfg: "Config") -> "STTBackend":
     raise ValueError(f"Unknown STT backend: {name!r}. Known: {BACKEND_NAMES}")
 
 
-def available_backends(cfg: "Config") -> list[str]:
+def available_backends(cfg: Config) -> list[str]:
     """Names of backends that can run right now (deps/keys present)."""
     return [name for name in BACKEND_NAMES if cfg.backend_available(name)]

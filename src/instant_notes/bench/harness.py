@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import math
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
-from instant_notes.stt.base import AudioData, STTBackend
 from instant_notes.bench.metrics import BenchResult, word_error_rate
+from instant_notes.stt.base import AudioData, STTBackend
 
 
 def run_benchmark(
     audio: AudioData,
     backends: Sequence[STTBackend],
-    reference: Optional[str] = None,
+    reference: str | None = None,
 ) -> list[BenchResult]:
     """Transcribe ``audio`` with each backend and collect a ``BenchResult``.
 
@@ -71,5 +71,12 @@ def format_report(results: Sequence[BenchResult]) -> str:
             rtf = f"{r.realtime_factor:.2f}"
         wer = "-" if r.wer is None else f"{r.wer:.3f}"
         lines.append(f"| {r.backend} | {total} | {first} | {rtf} | {wer} |")
+
+    # Transcripts — so you can eyeball *what* each backend actually heard,
+    # not just the numbers.
+    lines.append("")
+    lines.append("### Transcripts")
+    for r in rows:
+        lines.append(f"- **{r.backend}**: {r.text}")
 
     return "\n".join(lines)

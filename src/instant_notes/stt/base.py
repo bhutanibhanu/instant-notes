@@ -9,8 +9,8 @@ import io
 import time
 import wave
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -53,14 +53,14 @@ class STTMetrics:
     audio_duration_ms: float
     request_sent_ts: float
     final_ts: float
-    first_token_ts: Optional[float] = None
+    first_token_ts: float | None = None
 
     @property
     def total_ms(self) -> float:
         return 1000.0 * (self.final_ts - self.request_sent_ts)
 
     @property
-    def first_token_ms(self) -> Optional[float]:
+    def first_token_ms(self) -> float | None:
         if self.first_token_ts is None:
             return None
         return 1000.0 * (self.first_token_ts - self.request_sent_ts)
@@ -73,7 +73,7 @@ class STTMetrics:
         return self.total_ms / self.audio_duration_ms
 
     @classmethod
-    def start(cls, backend: str, audio_duration_ms: float) -> "STTMetrics":
+    def start(cls, backend: str, audio_duration_ms: float) -> STTMetrics:
         now = time.perf_counter()
         return cls(
             backend=backend,
@@ -95,7 +95,35 @@ class TranscriptionResult:
     text: str
     backend: str
     metrics: STTMetrics
-    raw: Optional[dict[str, Any]] = None
+    raw: dict[str, Any] | None = None
+
+
+class StreamingSession(ABC):
+    """A live transcription session.
+
+    The caller (the daemon's audio thread) pushes audio in real time via
+    :meth:`feed` while the user is still speaking, then calls :meth:`finish`
+    the instant they stop to get the final transcript with minimal added
+    latency.
+
+    Contract: :meth:`feed` MUST be non-blocking — it should enqueue the chunk
+    and return immediately so the PortAudio callback is never stalled. The
+    heavy lifting (network I/O, decoding) happens on the session's own worker
+    thread.
+    """
+
+    @abstractmethod
+    def feed(self, chunk: np.ndarray) -> None:
+        """Push a chunk of audio (mono float32 in [-1, 1]). Non-blocking."""
+
+    @abstractmethod
+    def finish(self) -> TranscriptionResult:
+        """Close the session and return the final transcript + metrics."""
+
+    def latest_partial(self) -> str:
+        """Best-effort most-recent partial transcript (for live UI). Optional;
+        backends without interim results return ``""``."""
+        return ""
 
 
 class STTBackend(ABC):
@@ -115,6 +143,16 @@ class STTBackend(ABC):
         """Whether this backend can run right now (keys present, SDK installed).
         Backends override to check their own preconditions."""
         return True
+
+    def supports_streaming(self) -> bool:
+        """Whether this backend can transcribe live during recording via
+        :meth:`open_stream`. Defaults to False (batch-only)."""
+        return False
+
+    def open_stream(self, sample_rate: int) -> StreamingSession:
+        """Open a live transcription session at ``sample_rate`` Hz mono.
+        Backends that ``supports_streaming()`` override this."""
+        raise NotImplementedError(f"{self.name} does not support streaming")
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return f"<STTBackend {self.name}>"

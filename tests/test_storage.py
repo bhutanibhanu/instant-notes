@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from instant_notes.storage import NoteStore
 
@@ -24,7 +24,7 @@ def test_search_fts():
 
 def test_today_filter():
     store = NoteStore(":memory:")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     store.add_note("old", created_at=now - timedelta(days=2))
     store.add_note("fresh", created_at=now)
     today = store.today(now=now)

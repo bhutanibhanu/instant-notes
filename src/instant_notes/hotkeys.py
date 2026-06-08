@@ -7,7 +7,8 @@ machines without pynput / an accessible input backend installed.
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 
 class HotkeyListener:
@@ -22,7 +23,8 @@ class HotkeyListener:
 
     def __init__(self, bindings: dict[str, Callable[[], None]]):
         self.bindings = bindings
-        self._listener = None  # pynput.keyboard.GlobalHotKeys
+        # pynput.keyboard.GlobalHotKeys (typed Any — pynput is a lazy/optional import)
+        self._listener: Any = None
 
     def start(self) -> None:
         """Start listening on a background thread."""

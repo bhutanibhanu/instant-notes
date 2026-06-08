@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -22,7 +21,7 @@ class Note:
     source_backend: str
     duration_ms: float
     latency_ms: float
-    audio_path: Optional[str] = None
+    audio_path: str | None = None
 
 
 _SCHEMA = """
@@ -87,10 +86,10 @@ class NoteStore:
         source_backend: str = "",
         duration_ms: float = 0.0,
         latency_ms: float = 0.0,
-        audio_path: Optional[str] = None,
-        created_at: Optional[datetime] = None,
+        audio_path: str | None = None,
+        created_at: datetime | None = None,
     ) -> Note:
-        created_at = created_at or datetime.now(timezone.utc)
+        created_at = created_at or datetime.now(UTC)
         cur = self.conn.execute(
             "INSERT INTO notes (created_at, text, source_backend, duration_ms, "
             "latency_ms, audio_path) VALUES (?, ?, ?, ?, ?, ?)",
@@ -98,6 +97,7 @@ class NoteStore:
              latency_ms, audio_path),
         )
         self.conn.commit()
+        assert cur.lastrowid is not None  # guaranteed after a successful INSERT
         return Note(
             id=cur.lastrowid,
             created_at=created_at,
@@ -120,7 +120,7 @@ class NoteStore:
         ).fetchall()
         return [_row_to_note(r) for r in rows]
 
-    def get(self, note_id: int) -> Optional[Note]:
+    def get(self, note_id: int) -> Note | None:
         row = self.conn.execute(
             "SELECT * FROM notes WHERE id = ?", (note_id,)
         ).fetchone()
@@ -133,8 +133,8 @@ class NoteStore:
         ).fetchall()
         return [_row_to_note(r) for r in rows]
 
-    def today(self, now: Optional[datetime] = None) -> list[Note]:
-        now = now or datetime.now(timezone.utc)
+    def today(self, now: datetime | None = None) -> list[Note]:
+        now = now or datetime.now(UTC)
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         return self.since(start)
 

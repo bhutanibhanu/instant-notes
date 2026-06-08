@@ -21,7 +21,7 @@ groq = ["groq>=0.11"]
 deepgram = ["deepgram-sdk>=3.7"]
 # install everything for the bench-off:
 all = ["faster-whisper>=1.0", "groq>=0.11", "deepgram-sdk>=3.7"]
-dev = ["pytest>=8.0", "pytest-mock>=3.12"]
+dev = ["pytest>=8.0", "pytest-mock>=3.12", "ruff>=0.6", "mypy>=1.11"]
 
 [project.scripts]
 instant-notes = "instant_notes.cli:main"
@@ -37,3 +37,19 @@ packages = ["src/instant_notes"]
 markers = [
     "local_model: tests that download/run a local whisper model (slow, gated)",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+ignore_missing_imports = true   # optional SDKs (groq, deepgram, faster_whisper) aren't installed in CI
+warn_unused_ignores = false
+check_untyped_defs = true

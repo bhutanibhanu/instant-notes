@@ -5,7 +5,7 @@ Uses an in-memory NoteStore and a FAKE Claude client — no real API calls.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -79,7 +79,7 @@ def test_show_recent_empty(store, cfg):
 
 
 def test_today(store, cfg):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     yesterday = now - timedelta(days=1)
     store.add_note("today note", created_at=now)
     store.add_note("old note", created_at=yesterday)

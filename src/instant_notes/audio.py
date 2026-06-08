@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import threading
-from typing import Optional
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
@@ -26,24 +27,34 @@ class AudioRecorder:
         self.sample_rate = sample_rate
         self.channels = channels
         self._frames: list[np.ndarray] = []
-        self._stream = None
+        self._stream: Any = None  # sounddevice.InputStream (lazy/optional import)
         self._lock = threading.Lock()
         self._recording = False
+        self._on_chunk: Callable[[np.ndarray], None] | None = None
 
     @property
     def is_recording(self) -> bool:
         return self._recording
 
-    def _callback(self, indata, frames, time_info, status):  # pragma: no cover
+    def _callback(self, indata, frames, time_info, status):
         # Runs on the PortAudio thread; keep it cheap.
         with self._lock:
             self._frames.append(indata.copy())
+        # Live streaming: hand a mono float32 copy to the consumer. The
+        # callback must be non-blocking (it enqueues), so we never stall the
+        # audio thread.
+        if self._on_chunk is not None:
+            self._on_chunk(indata.copy().reshape(-1))
 
-    def start(self) -> None:
+    def start(self, on_chunk: Callable[[np.ndarray], None] | None = None) -> None:
+        """Begin capturing. If ``on_chunk`` is given, each captured block is
+        also delivered to it live (mono float32) for streaming transcription;
+        ``stop()`` still returns the full :class:`AudioData` either way."""
         if self._recording:
             return
         import sounddevice as sd  # lazy
 
+        self._on_chunk = on_chunk
         with self._lock:
             self._frames = []
         self._stream = sd.InputStream(
@@ -63,6 +74,7 @@ class AudioRecorder:
         self._stream.close()
         self._stream = None
         self._recording = False
+        self._on_chunk = None
         with self._lock:
             frames = self._frames
             self._frames = []

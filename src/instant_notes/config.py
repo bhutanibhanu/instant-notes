@@ -1,8 +1,8 @@
 """Configuration: layered ``config.toml`` (behavior) + ``.env`` (secrets).
 
-Lookup order for files: explicit path → ``./config.toml`` → ``~/.config/instant-notes/config.toml``.
-Missing files are fine; defaults below apply. Secrets are read from the
-environment (``.env`` is loaded if present).
+Lookup order for files: explicit path → ``./config.toml`` →
+``~/.config/instant-notes/config.toml``. Missing files are fine; defaults below
+apply. Secrets are read from the environment (``.env`` is loaded if present).
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -46,10 +45,10 @@ class Config:
     db_path: Path = field(default_factory=lambda: DEFAULT_DB_PATH)
 
     # secrets (from env)
-    sarvam_api_key: Optional[str] = None
-    groq_api_key: Optional[str] = None
-    deepgram_api_key: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
+    sarvam_api_key: str | None = None
+    groq_api_key: str | None = None
+    deepgram_api_key: str | None = None
+    anthropic_api_key: str | None = None
 
     def backend_available(self, name: str) -> bool:
         return {
@@ -60,7 +59,7 @@ class Config:
         }.get(name, False)
 
 
-def _first_existing(explicit: Optional[str]) -> Optional[Path]:
+def _first_existing(explicit: str | None) -> Path | None:
     if explicit:
         p = Path(explicit)
         return p if p.exists() else None
@@ -70,7 +69,7 @@ def _first_existing(explicit: Optional[str]) -> Optional[Path]:
     return None
 
 
-def load_config(path: Optional[str] = None) -> Config:
+def load_config(path: str | None = None) -> Config:
     load_dotenv()  # populate os.environ from a local .env if present
     cfg = Config()
 
