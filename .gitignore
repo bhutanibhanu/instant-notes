@@ -1,6 +1,29 @@
-node_modules/
+# secrets / local config
 .env
-.DS_Store
+config.toml
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# build
 dist/
 build/
+
+# data / artifacts
+*.db
+*.sqlite
+*.sqlite3
+samples/*.wav
+
+# os / editor
+.DS_Store
 *.log
+node_modules/
