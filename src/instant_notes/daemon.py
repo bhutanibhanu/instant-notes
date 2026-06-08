@@ -12,8 +12,10 @@ new toggle of the *other* kind is ignored while a recording is in flight.
 
 from __future__ import annotations
 
+import threading
 import time
 
+from instant_notes import llm
 from instant_notes.audio import AudioRecorder, trim_silence
 from instant_notes.config import Config
 from instant_notes.hotkeys import HotkeyListener
@@ -133,11 +135,13 @@ class InstantNotesDaemon:
         if transcribed is None:
             return
         audio, result = transcribed
-        text = clean_transcript(result.text.strip(), self.cfg)
+        text = result.text.strip()
         if not text:
             notify("Instant Notes", "Heard nothing.", enabled=self.cfg.notify)
             return
-        self.store.add_note(
+        # Save + surface the raw transcript immediately (instant feel), then
+        # refine it in the background and update the note when cleanup returns.
+        note = self.store.add_note(
             text,
             source_backend=result.backend,  # backend name carried on the result
             duration_ms=audio.duration_ms,
@@ -146,6 +150,23 @@ class InstantNotesDaemon:
         notify("Note saved", text[:80], enabled=self.cfg.notify)
         if self.cfg.paste_at_cursor:
             paste_at_cursor(text)
+        if self.cfg.llm_cleanup and llm.available(self.cfg):
+            threading.Thread(
+                target=self._refine_note, args=(note.id, text), daemon=True
+            ).start()
+
+    def _refine_note(self, note_id: int, raw: str) -> None:
+        """Background: LLM-clean the transcript and update the saved note. Uses
+        its own DB connection (SQLite connections aren't shared across threads)."""
+        cleaned = clean_transcript(raw, self.cfg)
+        if not cleaned or cleaned == raw:
+            return
+        store = NoteStore(self.cfg.db_path)
+        try:
+            store.update_text(note_id, cleaned)
+        finally:
+            store.close()
+        notify("Note refined", cleaned[:80], enabled=self.cfg.notify)
 
     # --- command ----------------------------------------------------------
     def _toggle_command(self) -> None:

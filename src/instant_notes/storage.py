@@ -121,6 +121,13 @@ class NoteStore:
             audio_path=audio_path,
         )
 
+    def update_text(self, note_id: int, text: str) -> bool:
+        cur = self.conn.execute(
+            "UPDATE notes SET text = ? WHERE id = ?", (text, note_id)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def delete_note(self, note_id: int) -> bool:
         cur = self.conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
         self.conn.commit()

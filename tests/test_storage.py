@@ -39,6 +39,16 @@ def test_delete():
     assert store.search("temp") == []
 
 
+def test_update_text():
+    store = NoteStore(":memory:")
+    n = store.add_note("aaj ma eek note")
+    assert store.update_text(n.id, "aaj main ek note") is True
+    assert store.get(n.id).text == "aaj main ek note"
+    # FTS reflects the update
+    assert len(store.search("main")) == 1
+    assert store.update_text(9999, "nope") is False
+
+
 def test_search_with_fts_special_chars_does_not_crash():
     """Spoken queries with FTS operators/quotes/punctuation must never raise."""
     store = NoteStore(":memory:")
