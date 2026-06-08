@@ -7,6 +7,7 @@ Schema:
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -49,6 +50,18 @@ CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
     INSERT INTO notes_fts(rowid, text) VALUES (new.id, new.text);
 END;
 """
+
+
+def _safe_fts_query(query: str) -> str:
+    """Turn arbitrary (spoken) text into a safe FTS5 MATCH expression.
+
+    Raw user text can contain FTS operators/quotes (``"``, ``*``, ``:``, ``-``,
+    ``NEAR``, unbalanced quotes) that make ``MATCH`` raise and crash command
+    handling. We extract word tokens and quote each as a literal term, so the
+    query is always valid and operator-free.
+    """
+    tokens = re.findall(r"\w+", query.lower())
+    return " ".join(f'"{t}"' for t in tokens)
 
 
 def _row_to_note(row: sqlite3.Row) -> Note:
@@ -139,11 +152,19 @@ class NoteStore:
         return self.since(start)
 
     def search(self, query: str, limit: int = 20) -> list[Note]:
-        rows = self.conn.execute(
-            "SELECT notes.* FROM notes JOIN notes_fts ON notes.id = notes_fts.rowid "
-            "WHERE notes_fts MATCH ? ORDER BY rank LIMIT ?",
-            (query, limit),
-        ).fetchall()
+        safe = _safe_fts_query(query)
+        if not safe:
+            return []
+        try:
+            rows = self.conn.execute(
+                "SELECT notes.* FROM notes JOIN notes_fts "
+                "ON notes.id = notes_fts.rowid "
+                "WHERE notes_fts MATCH ? ORDER BY rank LIMIT ?",
+                (safe, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # Belt-and-suspenders: never let a malformed query crash the caller.
+            return []
         return [_row_to_note(r) for r in rows]
 
     def all(self) -> list[Note]:

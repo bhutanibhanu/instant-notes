@@ -54,10 +54,22 @@ class STTMetrics:
     request_sent_ts: float
     final_ts: float
     first_token_ts: float | None = None
+    # When the user stopped recording. For streaming backends this is set well
+    # after request_sent_ts (audio was already flowing), so stop_to_final_ms is
+    # the true "stopped talking → text ready" latency the design calls for.
+    recording_stopped_ts: float | None = None
 
     @property
     def total_ms(self) -> float:
         return 1000.0 * (self.final_ts - self.request_sent_ts)
+
+    @property
+    def stop_to_final_ms(self) -> float | None:
+        """Latency from the user stopping recording to the final transcript —
+        the number that actually reflects perceived responsiveness."""
+        if self.recording_stopped_ts is None:
+            return None
+        return 1000.0 * (self.final_ts - self.recording_stopped_ts)
 
     @property
     def first_token_ms(self) -> float | None:
@@ -88,6 +100,9 @@ class STTMetrics:
 
     def mark_final(self) -> None:
         self.final_ts = time.perf_counter()
+
+    def mark_recording_stopped(self) -> None:
+        self.recording_stopped_ts = time.perf_counter()
 
 
 @dataclass

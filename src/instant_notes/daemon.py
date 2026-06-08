@@ -12,6 +12,8 @@ new toggle of the *other* kind is ignored while a recording is in flight.
 
 from __future__ import annotations
 
+import time
+
 from instant_notes.audio import AudioRecorder
 from instant_notes.config import Config
 from instant_notes.hotkeys import HotkeyListener
@@ -88,6 +90,7 @@ class InstantNotesDaemon:
         session = self._session
         self._session = None
         audio = self.recorder.stop()
+        stopped_ts = time.perf_counter()  # the moment the user stopped talking
         backend = self.backend
         if backend is None:
             if session is not None:
@@ -104,10 +107,12 @@ class InstantNotesDaemon:
         if session is not None:
             try:
                 result = session.finish()
+                result.metrics.recording_stopped_ts = stopped_ts
                 return audio, result
             except Exception as exc:  # noqa: BLE001 - fall back to batch
                 print(f"[instant-notes] streaming finish failed, batch fallback: {exc}")
         result = backend.transcribe(audio)
+        result.metrics.recording_stopped_ts = stopped_ts
         return audio, result
 
     # --- capture ----------------------------------------------------------

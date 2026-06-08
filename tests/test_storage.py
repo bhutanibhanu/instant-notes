@@ -37,3 +37,31 @@ def test_delete():
     assert store.delete_note(n.id) is True
     assert store.get(n.id) is None
     assert store.search("temp") == []
+
+
+def test_search_with_fts_special_chars_does_not_crash():
+    """Spoken queries with FTS operators/quotes/punctuation must never raise."""
+    store = NoteStore(":memory:")
+    store.add_note("email me at user@example.com about the milk")
+    store.add_note("buy milk - eggs")
+    # These would all raise sqlite3.OperationalError if passed raw to MATCH.
+    for q in [
+        "user@example.com",
+        "milk - eggs",
+        'unbalanced "quote',
+        "NEAR/3 foo",
+        "*",
+        "AND OR NOT",
+        "",
+        "   ",
+    ]:
+        result = store.search(q)  # must not raise
+        assert isinstance(result, list)
+
+
+def test_search_special_chars_still_finds_terms():
+    store = NoteStore(":memory:")
+    store.add_note("email me at user@example.com about milk")
+    # Tokenized to literal terms — still matches the note containing them.
+    hits = store.search("user@example.com")
+    assert len(hits) == 1

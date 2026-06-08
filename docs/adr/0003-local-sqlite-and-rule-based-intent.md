@@ -19,6 +19,12 @@ free-form questions.
   call Claude, and both degrade gracefully (local summary / "key not configured")
   when no `ANTHROPIC_API_KEY` is present.
 
+## Deviation from the design doc
+`design.md` §6 originally specified an Anthropic `router_model` for intent
+routing. We intentionally route with rules instead (LLM reserved for summarize/
+ask). This is the accepted decision; the `router_model` config key is retained
+for a possible future LLM-router fallback but is not on the hot path today.
+
 ## Consequences
 - The app is useful offline and with zero keys (capture + show/search/today).
 - Claude is used where it adds real value (summarization, Q&A), not as a routing
