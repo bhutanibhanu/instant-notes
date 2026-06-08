@@ -28,12 +28,15 @@ class Config:
     command_hotkey: str = "<cmd>+<shift>+a"
 
     # STT
-    default_backend: str = "faster-whisper"
+    default_backend: str = "groq"
     whisper_model: str = "small"
     whisper_compute_type: str = "int8"  # cpu-friendly default
     sarvam_model: str = "saarika:v2.5"
     groq_model: str = "whisper-large-v3-turbo"
     deepgram_model: str = "nova-3"
+    # "roman" = romanized Hinglish output (Hindi in Latin letters, how the user
+    # types notes); "native" = Devanagari for Hindi. Currently honored by Groq.
+    output_script: str = "roman"
 
     # LLM (intent routing + answering)
     router_model: str = "claude-haiku-4-5"

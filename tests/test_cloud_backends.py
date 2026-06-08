@@ -20,6 +20,26 @@ def audio() -> AudioData:
     return AudioData(samples=np.zeros(16000, np.float32), sample_rate=16000)
 
 
+def test_groq_romanize_chunks_long_audio():
+    """Roman mode chunks long audio (~20s windows) to limit Whisper script drift."""
+    from instant_notes.stt.groq_backend import ROMANIZE_CHUNK_S, GroqBackend
+
+    sr = 16000
+    long_audio = AudioData(samples=np.zeros(int(132 * sr), np.float32), sample_rate=sr)
+    chunks = GroqBackend._chunks(long_audio)
+    assert len(chunks) == 7  # ceil(132 / 20)
+    assert all(len(c.samples) <= ROMANIZE_CHUNK_S * sr for c in chunks)
+    short = AudioData(samples=np.zeros(int(10 * sr), np.float32), sample_rate=sr)
+    assert len(GroqBackend._chunks(short)) == 1
+
+
+def test_groq_default_native_mode():
+    b = GroqBackend(api_key="k")
+    assert b.output_script == "native"
+    b2 = GroqBackend(api_key="k", output_script="roman")
+    assert b2.romanize_prompt  # has a default romanize prompt
+
+
 def test_sarvam_split_chunks_long_audio():
     """Audio over Sarvam's 30s sync limit is split into <=28s windows."""
     from instant_notes.stt.sarvam_backend import SARVAM_MAX_CHUNK_S, SarvamBackend
