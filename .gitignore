@@ -28,3 +28,4 @@ samples/*.wav
 .DS_Store
 *.log
 node_modules/
+docs/features/*/qa.err
