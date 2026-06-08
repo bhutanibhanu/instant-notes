@@ -45,6 +45,7 @@ class Config:
     # behavior
     paste_at_cursor: bool = False
     notify: bool = True
+    trim_silence: bool = True  # trim dead air before STT (latency + accuracy)
     db_path: Path = field(default_factory=lambda: DEFAULT_DB_PATH)
 
     # secrets (from env)

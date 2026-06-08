@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import time
 
-from instant_notes.audio import AudioRecorder
+from instant_notes.audio import AudioRecorder, trim_silence
 from instant_notes.config import Config
 from instant_notes.hotkeys import HotkeyListener
 from instant_notes.intent import NoteAssistant
@@ -111,7 +111,9 @@ class InstantNotesDaemon:
                 return audio, result
             except Exception as exc:  # noqa: BLE001 - fall back to batch
                 print(f"[instant-notes] streaming finish failed, batch fallback: {exc}")
-        result = backend.transcribe(audio)
+        # Batch path: trim dead air before sending (fewer bytes, less hallucination).
+        clip = trim_silence(audio) if self.cfg.trim_silence else audio
+        result = backend.transcribe(clip)
         result.metrics.recording_stopped_ts = stopped_ts
         return audio, result
 
