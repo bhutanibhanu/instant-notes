@@ -1,0 +1,55 @@
+[project]
+name = "instant-notes"
+version = "0.1.0"
+description = "Instant voice notes for macOS — hotkey to capture, voice to query. Low-latency, accurate STT."
+requires-python = ">=3.11"
+readme = "README.md"
+dependencies = [
+    "numpy>=1.26",
+    "sounddevice>=0.4.6",
+    "pynput>=1.7.6",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "rich>=13.7",
+    "anthropic>=0.39",
+    "jiwer>=3.0",
+]
+
+[project.optional-dependencies]
+faster-whisper = ["faster-whisper>=1.0"]
+groq = ["groq>=0.11"]
+deepgram = ["deepgram-sdk>=3.7"]
+# install everything for the bench-off:
+all = ["faster-whisper>=1.0", "groq>=0.11", "deepgram-sdk>=3.7"]
+dev = ["pytest>=8.0", "pytest-mock>=3.12", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+instant-notes = "instant_notes.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/instant_notes"]
+
+[tool.pytest.ini_options]
+markers = [
+    "local_model: tests that download/run a local whisper model (slow, gated)",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+ignore_missing_imports = true   # optional SDKs (groq, deepgram, faster_whisper) aren't installed in CI
+warn_unused_ignores = false
+check_untyped_defs = true

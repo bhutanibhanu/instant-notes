@@ -1,0 +1,23 @@
+# Copy to config.toml to override defaults. All sections optional.
+
+[hotkeys]
+# pynput format. Toggle to start/stop.
+capture_hotkey = "<cmd>+<shift>+space"   # dictate a note
+command_hotkey = "<cmd>+<shift>+a"       # speak a query
+
+[stt]
+default_backend = "faster-whisper"       # faster-whisper | sarvam | groq | deepgram
+whisper_model = "small"                  # tiny | base | small | medium | large-v3
+whisper_compute_type = "int8"            # int8 | int8_float16 | float16
+sarvam_model = "saarika:v2"
+groq_model = "whisper-large-v3-turbo"
+deepgram_model = "nova-3"
+
+[llm]
+router_model = "claude-haiku-4-5"        # cheap/fast intent routing
+answer_model = "claude-opus-4-8"         # summarize / ask
+
+[behavior]
+paste_at_cursor = false                  # also paste dictation at the cursor
+notify = true                            # macOS notifications for results
+# db_path = "~/.local/share/instant-notes/notes.db"
