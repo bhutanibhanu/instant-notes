@@ -33,6 +33,19 @@ def test_groq_romanize_chunks_long_audio():
     assert len(GroqBackend._chunks(short)) == 1
 
 
+def test_groq_streaming_windows(monkeypatch):
+    """Streaming session windows audio fed during recording; finish flushes tail."""
+    b = GroqBackend(api_key="k")
+    monkeypatch.setattr(b, "_transcribe_window", lambda audio: "win")
+    sess = b.open_stream(16000)
+    # feed 20s in 0.5s chunks → two full 8s windows + a 4s tail at finish = 3
+    for _ in range(40):
+        sess.feed(np.zeros(int(0.5 * 16000), np.float32))
+    result = sess.finish()
+    assert result.raw["windows"] == 3
+    assert result.text == "win win win"
+
+
 def test_groq_default_native_mode():
     b = GroqBackend(api_key="k")
     assert b.output_script == "native"

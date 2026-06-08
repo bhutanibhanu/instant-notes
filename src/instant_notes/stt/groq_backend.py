@@ -4,33 +4,40 @@ The ``groq`` SDK is imported lazily so this module imports cleanly even when the
 package is not installed.
 
 Two output modes (``output_script``):
-- ``"native"``  — Whisper's default: Hindi in Devanagari, English in Latin.
-- ``"roman"``   — romanized Hinglish (Hindi written in Latin letters), which is
-  how the user actually types notes. Achieved with ``language="en"`` + a
-  romanized-Hinglish ``prompt`` that biases Whisper's output script. Whisper
-  drifts back to Devanagari over long audio, so in roman mode we transcribe in
-  short windows, re-priming the prompt each chunk to keep romanization stable.
+- ``"native"``  — Whisper default: Hindi in Devanagari, English in Latin.
+- ``"roman"``   — romanized Hinglish (Hindi in Latin letters). Achieved with
+  ``language="en"`` + a romanized-Hinglish ``prompt``; long audio is windowed and
+  the prompt re-primed per window to keep romanization from drifting.
+
+Streaming (``open_stream``): Groq is a batch API, but we approximate live
+transcription by transcribing fixed windows *as audio is fed during recording*.
+When the user stops, only the final partial window remains — so stop→text latency
+is roughly one window, not the whole clip.
 """
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+
+import numpy as np
 
 from instant_notes.stt.base import (
     AudioData,
+    StreamingSession,
     STTBackend,
     STTMetrics,
     TranscriptionResult,
 )
 
-# A romanized-Hinglish exemplar; priming Whisper with this biases it to emit
-# Hindi in Latin letters while keeping English words intact.
 DEFAULT_ROMANIZE_PROMPT = (
     "Namaste, mera naam Bhanu hai. Yeh ek Hinglish transcription hai jisme Hindi "
     "words roman letters mein likhe gaye hain aur English words normal hain. "
     "Maine socha ki aaj kuch test karu."
 )
-ROMANIZE_CHUNK_S = 20.0  # window for re-priming the prompt (limits script drift)
+ROMANIZE_CHUNK_S = 20.0   # window for re-priming the prompt (batch romanized)
+GROQ_STREAM_WINDOW_S = 8.0  # window size for transcribe-while-recording
 
 
 class GroqBackend(STTBackend):
@@ -65,58 +72,43 @@ class GroqBackend(STTBackend):
             self._client = Groq(api_key=self.api_key)
         return self._client
 
-    def transcribe(self, audio: AudioData) -> TranscriptionResult:
+    def _transcribe_window(self, audio: AudioData) -> str:
+        """One Groq transcription call for a single window (honours output_script)."""
+        kwargs: dict[str, Any] = {}
         if self.output_script == "roman":
-            return self._transcribe_romanized(audio)
-        return self._transcribe_native(audio)
-
-    def _transcribe_native(self, audio: AudioData) -> TranscriptionResult:
-        client = self._groq()
-        metrics = STTMetrics.start(self.name, audio.duration_ms)
-        resp = client.audio.transcriptions.create(
+            kwargs = {"language": "en", "prompt": self.romanize_prompt}
+        resp = self._groq().audio.transcriptions.create(
             file=("audio.wav", audio.to_wav_bytes()),
             model=self.model,
             response_format="json",
+            **kwargs,
         )
-        metrics.mark_final()
-        text = (getattr(resp, "text", "") or "").strip()
-        return TranscriptionResult(
-            text=text, backend=self.name, metrics=metrics, raw=self._to_raw(resp)
-        )
+        return (getattr(resp, "text", "") or "").strip()
 
-    def _transcribe_romanized(self, audio: AudioData) -> TranscriptionResult:
-        client = self._groq()
-        chunks = self._chunks(audio)
+    def transcribe(self, audio: AudioData) -> TranscriptionResult:
+        chunks = self._chunks(audio) if self.output_script == "roman" else [audio]
         metrics = STTMetrics.start(self.name, audio.duration_ms)
-
-        def run(chunk: AudioData):
-            return client.audio.transcriptions.create(
-                file=("audio.wav", chunk.to_wav_bytes()),
-                model=self.model,
-                response_format="json",
-                language="en",
-                prompt=self.romanize_prompt,
-            )
-
-        # Chunks are independent (fixed prompt, no sequential dependency), so we
-        # fire them concurrently — total latency is the slowest chunk, not the sum.
         if len(chunks) == 1:
-            responses = [run(chunks[0])]
+            parts = [self._transcribe_window(chunks[0])]
         else:
-            from concurrent.futures import ThreadPoolExecutor
-
+            # Independent windows (fixed prompt) → run concurrently.
             with ThreadPoolExecutor(max_workers=min(len(chunks), 8)) as pool:
-                responses = list(pool.map(run, chunks))  # preserves order
-
+                parts = list(pool.map(self._transcribe_window, chunks))
         metrics.mark_first_token()
         metrics.mark_final()
-        parts = [(getattr(r, "text", "") or "").strip() for r in responses]
         return TranscriptionResult(
             text=" ".join(p for p in parts if p).strip(),
             backend=self.name,
             metrics=metrics,
-            raw=self._to_raw(responses[-1]) if responses else {},
+            raw={"windows": len(chunks)},
         )
+
+    # --- streaming (transcribe-while-recording) ---------------------------
+    def supports_streaming(self) -> bool:
+        return self.is_available()
+
+    def open_stream(self, sample_rate: int) -> StreamingSession:
+        return _GroqStreamingSession(self, sample_rate)
 
     @staticmethod
     def _chunks(audio: AudioData) -> list[AudioData]:
@@ -139,3 +131,70 @@ class GroqBackend(STTBackend):
                 except Exception:
                     pass
         return {"text": getattr(resp, "text", None)}
+
+
+class _GroqStreamingSession(StreamingSession):
+    """Transcribe ~GROQ_STREAM_WINDOW_S windows as audio is fed during recording.
+
+    ``feed`` is non-blocking: it buffers and, once a full window accrues, submits
+    that window to a thread pool. ``finish`` flushes the tail and joins, so the
+    only work left at stop is the final partial window.
+    """
+
+    def __init__(self, backend: GroqBackend, sample_rate: int) -> None:
+        self._b = backend
+        self._sr = sample_rate
+        self._win = int(GROQ_STREAM_WINDOW_S * sample_rate)
+        self._buf: list[np.ndarray] = []
+        self._buf_n = 0
+        self._fed = 0
+        self._futures: list[Any] = []
+        self._pool = ThreadPoolExecutor(max_workers=4)
+        self._lock = threading.Lock()
+        self._metrics = STTMetrics.start(backend.name, 0.0)
+
+    def feed(self, chunk: np.ndarray) -> None:
+        arr = np.asarray(chunk, dtype=np.float32).reshape(-1)
+        with self._lock:
+            self._fed += arr.size
+            self._buf.append(arr)
+            self._buf_n += arr.size
+            while self._buf_n >= self._win:
+                self._submit(self._pop_locked(self._win))
+
+    def _pop_locked(self, n: int) -> np.ndarray:
+        data = np.concatenate(self._buf) if self._buf else np.zeros(0, np.float32)
+        window, rest = data[:n], data[n:]
+        self._buf = [rest] if rest.size else []
+        self._buf_n = int(rest.size)
+        return window
+
+    def _submit(self, samples: np.ndarray) -> None:
+        audio = AudioData(samples=samples, sample_rate=self._sr)
+        self._futures.append(self._pool.submit(self._b._transcribe_window, audio))
+
+    def finish(self) -> TranscriptionResult:
+        with self._lock:
+            if self._buf_n > 0:
+                self._submit(self._pop_locked(self._buf_n))
+        parts: list[str] = []
+        for i, fut in enumerate(self._futures):
+            try:
+                t = fut.result()
+            except Exception:
+                t = ""
+            if i == 0:
+                self._metrics.mark_first_token()
+            if t:
+                parts.append(t)
+        self._metrics.audio_duration_ms = (
+            1000.0 * self._fed / self._sr if self._sr else 0.0
+        )
+        self._metrics.mark_final()
+        self._pool.shutdown(wait=False)
+        return TranscriptionResult(
+            text=" ".join(parts).strip(),
+            backend=self._b.name,
+            metrics=self._metrics,
+            raw={"windows": len(self._futures)},
+        )
