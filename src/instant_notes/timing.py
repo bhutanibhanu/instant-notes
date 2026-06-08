@@ -112,8 +112,11 @@ class Tracer:
         return {
             "sid": session.sid,
             "events_ms": events_ms,
+            # perceived "instant feel": stopped talking → text in front of user
             "stop_to_text_ms": stop_to_text,
-            "stt_ms": delta(Event.STT_REQUEST, Event.STT_DONE),
+            # post-stop STT of the live tail (request→done). In streaming mode this
+            # is the only audio not already transcribed during recording.
+            "tail_stt_ms": delta(Event.STT_REQUEST, Event.STT_DONE),
             "cleanup_ms": delta(Event.CLEANUP_START, Event.CLEANUP_DONE),
             "total_ms": (
                 round(1000.0 * (max(marks.values()) - session.start), 3)
@@ -132,3 +135,94 @@ class Tracer:
 
 #: process-wide tracer used by the daemon call sites
 tracer = Tracer()
+
+
+# --- stats (CLI: `python -m instant_notes.timing stats`) -------------------
+
+STAT_METRICS = ["stop_to_text_ms", "tail_stt_ms", "cleanup_ms", "total_ms"]
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    """Linear-interpolated percentile (pure stdlib)."""
+    s = sorted(values)
+    if len(s) == 1:
+        return s[0]
+    k = (len(s) - 1) * pct / 100.0
+    lo = int(k)
+    hi = min(lo + 1, len(s) - 1)
+    return s[lo] + (s[hi] - s[lo]) * (k - lo)
+
+
+def load_records(path: str | Path) -> list[dict]:
+    """Read JSONL timing records; tolerate a missing file / bad lines."""
+    p = Path(path)
+    if not p.exists():
+        return []
+    records: list[dict] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except Exception:
+            pass
+    return records
+
+
+def compute_stats(records: list[dict]) -> dict[str, dict[str, float]]:
+    """Per-metric {n, p50, p95, max} over the records (None values skipped)."""
+    out: dict[str, dict[str, float]] = {}
+    for metric in STAT_METRICS:
+        vals = [
+            float(r[metric])
+            for r in records
+            if isinstance(r.get(metric), (int, float))
+        ]
+        if vals:
+            out[metric] = {
+                "n": len(vals),
+                "p50": _percentile(vals, 50),
+                "p95": _percentile(vals, 95),
+                "max": max(vals),
+            }
+    return out
+
+
+def _print_stats(path: str | Path) -> int:
+    records = load_records(path)
+    if not records:
+        print(f"No timing data at {path}.")
+        print("Run `instant-notes start` and dictate a few notes first.")
+        return 0
+    stats = compute_stats(records)
+    print(f"{len(records)} sessions  ({path})\n")
+    print(f"{'metric':<18}{'n':>5}{'p50':>10}{'p95':>10}{'max':>10}")
+    print("-" * 53)
+    for metric in STAT_METRICS:
+        s = stats.get(metric)
+        if not s:
+            continue
+        print(
+            f"{metric:<18}{int(s['n']):>5}"
+            f"{s['p50']:>10.1f}{s['p95']:>10.1f}{s['max']:>10.1f}"
+        )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m instant_notes.timing")
+    sub = parser.add_subparsers(dest="cmd")
+    p_stats = sub.add_parser("stats", help="p50/p95/max per latency metric")
+    p_stats.add_argument("--path", default=str(DEFAULT_PATH), help="JSONL log path")
+    args = parser.parse_args(argv)
+    if args.cmd == "stats":
+        return _print_stats(args.path)
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
