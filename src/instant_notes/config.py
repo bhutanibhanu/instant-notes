@@ -28,20 +28,29 @@ class Config:
     command_hotkey: str = "<cmd>+<shift>+a"
 
     # STT
-    default_backend: str = "faster-whisper"
+    default_backend: str = "groq"
     whisper_model: str = "small"
     whisper_compute_type: str = "int8"  # cpu-friendly default
-    sarvam_model: str = "saarika:v2"
+    sarvam_model: str = "saarika:v2.5"
     groq_model: str = "whisper-large-v3-turbo"
     deepgram_model: str = "nova-3"
+    # "roman" = romanized Hinglish output (Hindi in Latin letters, how the user
+    # types notes); "native" = Devanagari for Hindi. Currently honored by Groq.
+    output_script: str = "roman"
 
-    # LLM (intent routing + answering)
+    # LLM layer (transcript cleanup + notes query). Default provider is Groq, so
+    # no Anthropic key is needed — it reuses the Groq STT key.
+    llm_provider: str = "groq"           # groq | anthropic
+    llm_model: str = "llama-3.3-70b-versatile"   # groq chat model
+    llm_cleanup: bool = True             # LLM pass to fix romanization/mishears
+    # used only when llm_provider = "anthropic"
     router_model: str = "claude-haiku-4-5"
     answer_model: str = "claude-opus-4-8"
 
     # behavior
     paste_at_cursor: bool = False
     notify: bool = True
+    trim_silence: bool = True  # trim dead air before STT (latency + accuracy)
     db_path: Path = field(default_factory=lambda: DEFAULT_DB_PATH)
 
     # secrets (from env)

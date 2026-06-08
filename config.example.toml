@@ -6,16 +6,21 @@ capture_hotkey = "<cmd>+<shift>+space"   # dictate a note
 command_hotkey = "<cmd>+<shift>+a"       # speak a query
 
 [stt]
-default_backend = "faster-whisper"       # faster-whisper | sarvam | groq | deepgram
+default_backend = "groq"                 # faster-whisper | sarvam | groq | deepgram
 whisper_model = "small"                  # tiny | base | small | medium | large-v3
 whisper_compute_type = "int8"            # int8 | int8_float16 | float16
-sarvam_model = "saarika:v2"
+sarvam_model = "saarika:v2.5"
 groq_model = "whisper-large-v3-turbo"
 deepgram_model = "nova-3"
+output_script = "roman"   # roman = romanized Hinglish (Hindi in Latin); native = Devanagari
 
 [llm]
-router_model = "claude-haiku-4-5"        # cheap/fast intent routing
-answer_model = "claude-opus-4-8"         # summarize / ask
+llm_provider = "groq"                    # groq (reuses GROQ_API_KEY) | anthropic
+llm_model = "llama-3.3-70b-versatile"    # groq chat model (cleanup + query)
+llm_cleanup = true                       # LLM pass to fix romanization/mishears
+# used only when llm_provider = "anthropic":
+router_model = "claude-haiku-4-5"
+answer_model = "claude-opus-4-8"
 
 [behavior]
 paste_at_cursor = false                  # also paste dictation at the cursor

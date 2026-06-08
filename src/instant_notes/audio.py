@@ -106,6 +106,38 @@ def load_wav(path: str) -> AudioData:
                      sample_rate=TARGET_SAMPLE_RATE)
 
 
+def trim_silence(
+    audio: AudioData,
+    threshold: float = 0.01,
+    frame_ms: float = 30.0,
+    pad_ms: float = 120.0,
+) -> AudioData:
+    """Trim leading/trailing near-silence using per-frame RMS energy.
+
+    Notes captured by hotkey toggle have dead air at both ends (press → speak →
+    press); trimming it sends fewer bytes (lower latency) and avoids Whisper
+    hallucinating words over silence (better accuracy). A small ``pad_ms`` is
+    kept around the speech so we don't clip onsets. Returns the original audio
+    unchanged if it's all below threshold (don't return an empty clip).
+    """
+    n = len(audio.samples)
+    if n == 0:
+        return audio
+    frame = max(1, int(frame_ms / 1000.0 * audio.sample_rate))
+    n_frames = n // frame
+    if n_frames < 2:
+        return audio
+    trimmed = audio.samples[: n_frames * frame].reshape(n_frames, frame)
+    rms = np.sqrt(np.mean(trimmed.astype(np.float64) ** 2, axis=1))
+    voiced = np.where(rms >= threshold)[0]
+    if len(voiced) == 0:
+        return audio  # all quiet — keep as-is rather than returning nothing
+    pad = int(pad_ms / 1000.0 * audio.sample_rate)
+    start = max(0, voiced[0] * frame - pad)
+    end = min(n, (voiced[-1] + 1) * frame + pad)
+    return AudioData(samples=audio.samples[start:end], sample_rate=audio.sample_rate)
+
+
 def _resample(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     if src_rate == dst_rate or len(samples) == 0:
         return samples

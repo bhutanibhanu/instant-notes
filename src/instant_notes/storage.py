@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -83,13 +84,19 @@ class NoteStore:
         self.db_path = str(db_path)
         if self.db_path != ":memory:":
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path)
+        # check_same_thread=False: the daemon creates the store on the main
+        # thread but hotkey callbacks fire on pynput's listener thread. A lock
+        # serializes access so cross-thread use is safe (not just permitted).
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(_SCHEMA)
-        self.conn.commit()
+        self._lock = threading.RLock()
+        with self._lock:
+            self.conn.executescript(_SCHEMA)
+            self.conn.commit()
 
     def close(self) -> None:
-        self.conn.close()
+        with self._lock:
+            self.conn.close()
 
     # --- writes -----------------------------------------------------------
     def add_note(
@@ -103,13 +110,14 @@ class NoteStore:
         created_at: datetime | None = None,
     ) -> Note:
         created_at = created_at or datetime.now(UTC)
-        cur = self.conn.execute(
-            "INSERT INTO notes (created_at, text, source_backend, duration_ms, "
-            "latency_ms, audio_path) VALUES (?, ?, ?, ?, ?, ?)",
-            (created_at.isoformat(), text, source_backend, duration_ms,
-             latency_ms, audio_path),
-        )
-        self.conn.commit()
+        with self._lock:
+            cur = self.conn.execute(
+                "INSERT INTO notes (created_at, text, source_backend, duration_ms, "
+                "latency_ms, audio_path) VALUES (?, ?, ?, ?, ?, ?)",
+                (created_at.isoformat(), text, source_backend, duration_ms,
+                 latency_ms, audio_path),
+            )
+            self.conn.commit()
         assert cur.lastrowid is not None  # guaranteed after a successful INSERT
         return Note(
             id=cur.lastrowid,
@@ -121,29 +129,41 @@ class NoteStore:
             audio_path=audio_path,
         )
 
+    def update_text(self, note_id: int, text: str) -> bool:
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE notes SET text = ? WHERE id = ?", (text, note_id)
+            )
+            self.conn.commit()
+        return cur.rowcount > 0
+
     def delete_note(self, note_id: int) -> bool:
-        cur = self.conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
-        self.conn.commit()
+        with self._lock:
+            cur = self.conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+            self.conn.commit()
         return cur.rowcount > 0
 
     # --- reads ------------------------------------------------------------
     def recent(self, limit: int = 20) -> list[Note]:
-        rows = self.conn.execute(
-            "SELECT * FROM notes ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM notes ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
         return [_row_to_note(r) for r in rows]
 
     def get(self, note_id: int) -> Note | None:
-        row = self.conn.execute(
-            "SELECT * FROM notes WHERE id = ?", (note_id,)
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM notes WHERE id = ?", (note_id,)
+            ).fetchone()
         return _row_to_note(row) if row else None
 
     def since(self, start: datetime) -> list[Note]:
-        rows = self.conn.execute(
-            "SELECT * FROM notes WHERE created_at >= ? ORDER BY created_at ASC",
-            (start.isoformat(),),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM notes WHERE created_at >= ? ORDER BY created_at ASC",
+                (start.isoformat(),),
+            ).fetchall()
         return [_row_to_note(r) for r in rows]
 
     def today(self, now: datetime | None = None) -> list[Note]:
@@ -156,19 +176,21 @@ class NoteStore:
         if not safe:
             return []
         try:
-            rows = self.conn.execute(
-                "SELECT notes.* FROM notes JOIN notes_fts "
-                "ON notes.id = notes_fts.rowid "
-                "WHERE notes_fts MATCH ? ORDER BY rank LIMIT ?",
-                (safe, limit),
-            ).fetchall()
+            with self._lock:
+                rows = self.conn.execute(
+                    "SELECT notes.* FROM notes JOIN notes_fts "
+                    "ON notes.id = notes_fts.rowid "
+                    "WHERE notes_fts MATCH ? ORDER BY rank LIMIT ?",
+                    (safe, limit),
+                ).fetchall()
         except sqlite3.OperationalError:
             # Belt-and-suspenders: never let a malformed query crash the caller.
             return []
         return [_row_to_note(r) for r in rows]
 
     def all(self) -> list[Note]:
-        rows = self.conn.execute(
-            "SELECT * FROM notes ORDER BY created_at ASC"
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM notes ORDER BY created_at ASC"
+            ).fetchall()
         return [_row_to_note(r) for r in rows]

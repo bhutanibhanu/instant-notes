@@ -20,6 +20,100 @@ def audio() -> AudioData:
     return AudioData(samples=np.zeros(16000, np.float32), sample_rate=16000)
 
 
+def test_groq_romanize_chunks_long_audio():
+    """Roman mode chunks long audio (~20s windows) to limit Whisper script drift."""
+    from instant_notes.stt.groq_backend import ROMANIZE_CHUNK_S, GroqBackend
+
+    sr = 16000
+    long_audio = AudioData(samples=np.zeros(int(132 * sr), np.float32), sample_rate=sr)
+    chunks = GroqBackend._chunks(long_audio)
+    assert len(chunks) == 7  # ceil(132 / 20)
+    assert all(len(c.samples) <= ROMANIZE_CHUNK_S * sr for c in chunks)
+    short = AudioData(samples=np.zeros(int(10 * sr), np.float32), sample_rate=sr)
+    assert len(GroqBackend._chunks(short)) == 1
+
+
+def test_groq_streaming_max_cap_windows(monkeypatch):
+    """Continuous (non-silent) audio is force-flushed at the MAX window cap."""
+    b = GroqBackend(api_key="k")
+    monkeypatch.setattr(b, "_transcribe_window", lambda audio: "win")
+    sess = b.open_stream(16000)
+    rng = np.random.default_rng(0)
+    # 30s of loud noise (never silent) → max-cap at 14s twice + 2s tail = 3
+    for _ in range(60):
+        sess.feed((0.5 * rng.standard_normal(int(0.5 * 16000))).astype(np.float32))
+    result = sess.finish()
+    assert result.raw["windows"] == 3
+    assert result.text == "win win win"
+
+
+def test_groq_streaming_all_windows_fail_raises(monkeypatch):
+    """If every window errors, finish() raises so the daemon falls back to batch."""
+    b = GroqBackend(api_key="k")
+
+    def boom(audio):
+        raise RuntimeError("groq down")
+
+    monkeypatch.setattr(b, "_transcribe_window", boom)
+    sess = b.open_stream(16000)
+    rng = np.random.default_rng(3)
+    sess.feed((0.5 * rng.standard_normal(8 * 16000)).astype(np.float32))
+    sess.feed(np.zeros(int(0.4 * 16000), np.float32))  # pause → submit a window
+    with pytest.raises(RuntimeError):
+        sess.finish()
+
+
+def test_groq_streaming_close_no_raise(monkeypatch):
+    b = GroqBackend(api_key="k")
+    monkeypatch.setattr(b, "_transcribe_window", lambda audio: "x")
+    sess = b.open_stream(16000)
+    sess.feed(np.zeros(1000, np.float32))
+    sess.close()  # cleanup must not raise
+
+
+def test_groq_streaming_flushes_on_pause(monkeypatch):
+    """A silent tail after enough audio flushes a pause-aligned window."""
+    b = GroqBackend(api_key="k")
+    monkeypatch.setattr(b, "_transcribe_window", lambda audio: "seg")
+    sess = b.open_stream(16000)
+    rng = np.random.default_rng(1)
+    sess.feed((0.5 * rng.standard_normal(8 * 16000)).astype(np.float32))  # 8s speech
+    sess.feed(np.zeros(int(0.4 * 16000), np.float32))  # 0.4s silence → pause flush
+    # one window already flushed at the pause (>= 7s min + silent tail)
+    assert len(sess._futures) == 1
+
+
+def test_groq_default_native_mode():
+    b = GroqBackend(api_key="k")
+    assert b.output_script == "native"
+    b2 = GroqBackend(api_key="k", output_script="roman")
+    assert b2.romanize_prompt  # has a default romanize prompt
+
+
+def test_sarvam_split_text_for_transliterate():
+    from instant_notes.stt.sarvam_backend import SarvamBackend
+
+    text = " ".join(["word"] * 500)  # ~2500 chars
+    chunks = SarvamBackend._split_text(text, 900)
+    assert len(chunks) >= 3
+    assert all(len(c) <= 900 for c in chunks)
+    assert SarvamBackend._split_text("short text", 900) == ["short text"]
+
+
+def test_sarvam_split_chunks_long_audio():
+    """Audio over Sarvam's 30s sync limit is split into <=28s windows."""
+    from instant_notes.stt.sarvam_backend import SARVAM_MAX_CHUNK_S, SarvamBackend
+
+    sr = 16000
+    long_audio = AudioData(samples=np.zeros(int(132 * sr), np.float32), sample_rate=sr)
+    chunks = SarvamBackend._split(long_audio)
+    assert len(chunks) == 5  # ceil(132 / 28)
+    assert all(len(c.samples) <= SARVAM_MAX_CHUNK_S * sr for c in chunks)
+    # short audio is a single chunk (no splitting)
+    short = AudioData(samples=np.zeros(int(10 * sr), np.float32), sample_rate=sr)
+    assert len(SarvamBackend._split(short)) == 1
+
+
 # --------------------------------------------------------------------------- #
 # Sarvam — fake httpx.Client.post
 # --------------------------------------------------------------------------- #

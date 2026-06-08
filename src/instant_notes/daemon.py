@@ -12,13 +12,16 @@ new toggle of the *other* kind is ignored while a recording is in flight.
 
 from __future__ import annotations
 
+import threading
 import time
 
-from instant_notes.audio import AudioRecorder
+from instant_notes import llm
+from instant_notes.audio import AudioRecorder, trim_silence
 from instant_notes.config import Config
 from instant_notes.hotkeys import HotkeyListener
 from instant_notes.intent import NoteAssistant
 from instant_notes.notify import notify, paste_at_cursor
+from instant_notes.refine import clean_transcript
 from instant_notes.storage import NoteStore
 from instant_notes.stt.base import StreamingSession, STTBackend
 from instant_notes.stt.registry import build_backend
@@ -111,7 +114,9 @@ class InstantNotesDaemon:
                 return audio, result
             except Exception as exc:  # noqa: BLE001 - fall back to batch
                 print(f"[instant-notes] streaming finish failed, batch fallback: {exc}")
-        result = backend.transcribe(audio)
+        # Batch path: trim dead air before sending (fewer bytes, less hallucination).
+        clip = trim_silence(audio) if self.cfg.trim_silence else audio
+        result = backend.transcribe(clip)
         result.metrics.recording_stopped_ts = stopped_ts
         return audio, result
 
@@ -134,7 +139,9 @@ class InstantNotesDaemon:
         if not text:
             notify("Instant Notes", "Heard nothing.", enabled=self.cfg.notify)
             return
-        self.store.add_note(
+        # Save + surface the raw transcript immediately (instant feel), then
+        # refine it in the background and update the note when cleanup returns.
+        note = self.store.add_note(
             text,
             source_backend=result.backend,  # backend name carried on the result
             duration_ms=audio.duration_ms,
@@ -143,6 +150,23 @@ class InstantNotesDaemon:
         notify("Note saved", text[:80], enabled=self.cfg.notify)
         if self.cfg.paste_at_cursor:
             paste_at_cursor(text)
+        if self.cfg.llm_cleanup and llm.available(self.cfg):
+            threading.Thread(
+                target=self._refine_note, args=(note.id, text), daemon=True
+            ).start()
+
+    def _refine_note(self, note_id: int, raw: str) -> None:
+        """Background: LLM-clean the transcript and update the saved note. Uses
+        its own DB connection (SQLite connections aren't shared across threads)."""
+        cleaned = clean_transcript(raw, self.cfg)
+        if not cleaned or cleaned == raw:
+            return
+        store = NoteStore(self.cfg.db_path)
+        try:
+            store.update_text(note_id, cleaned)
+        finally:
+            store.close()
+        notify("Note refined", cleaned[:80], enabled=self.cfg.notify)
 
     # --- command ----------------------------------------------------------
     def _toggle_command(self) -> None:
@@ -189,4 +213,18 @@ class InstantNotesDaemon:
             listener.stop()
             if self.recorder.is_recording:
                 self.recorder.stop()
+            # Clean up an in-flight streaming session (thread pool + sockets).
+            if self._session is not None:
+                try:
+                    self._session.close()
+                except Exception:
+                    pass
+                self._session = None
+            # Close any backend that holds connections (pooled httpx, etc.).
+            close = getattr(self._backend, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
             self.store.close()

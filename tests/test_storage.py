@@ -39,6 +39,39 @@ def test_delete():
     assert store.search("temp") == []
 
 
+def test_cross_thread_access():
+    """Store created on one thread must be usable from another (daemon creates
+    it on the main thread; hotkey callbacks run on pynput's listener thread)."""
+    import threading
+
+    store = NoteStore(":memory:")
+    store.add_note("from main thread")
+    errors: list[Exception] = []
+
+    def worker():
+        try:
+            store.add_note("from worker thread")
+            assert len(store.recent()) == 2
+            assert len(store.search("worker")) == 1
+        except Exception as e:  # would be sqlite3.ProgrammingError pre-fix
+            errors.append(e)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    assert not errors, errors
+
+
+def test_update_text():
+    store = NoteStore(":memory:")
+    n = store.add_note("aaj ma eek note")
+    assert store.update_text(n.id, "aaj main ek note") is True
+    assert store.get(n.id).text == "aaj main ek note"
+    # FTS reflects the update
+    assert len(store.search("main")) == 1
+    assert store.update_text(9999, "nope") is False
+
+
 def test_search_with_fts_special_chars_does_not_crash():
     """Spoken queries with FTS operators/quotes/punctuation must never raise."""
     store = NoteStore(":memory:")

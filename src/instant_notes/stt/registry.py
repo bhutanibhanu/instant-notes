@@ -31,12 +31,20 @@ def build_backend(name: str, cfg: Config) -> STTBackend:
         if not cfg.sarvam_api_key:
             raise ValueError("SARVAM_API_KEY not set")
         from instant_notes.stt.sarvam_backend import SarvamBackend
-        return SarvamBackend(api_key=cfg.sarvam_api_key, model=cfg.sarvam_model)
+        return SarvamBackend(
+            api_key=cfg.sarvam_api_key,
+            model=cfg.sarvam_model,
+            output_script=cfg.output_script,
+        )
     if name == "groq":
         if not cfg.groq_api_key:
             raise ValueError("GROQ_API_KEY not set")
         from instant_notes.stt.groq_backend import GroqBackend
-        return GroqBackend(api_key=cfg.groq_api_key, model=cfg.groq_model)
+        return GroqBackend(
+            api_key=cfg.groq_api_key,
+            model=cfg.groq_model,
+            output_script=cfg.output_script,
+        )
     if name == "deepgram":
         if not cfg.deepgram_api_key:
             raise ValueError("DEEPGRAM_API_KEY not set")
