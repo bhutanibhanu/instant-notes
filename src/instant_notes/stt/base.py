@@ -140,6 +140,11 @@ class StreamingSession(ABC):
         backends without interim results return ``""``."""
         return ""
 
+    def close(self) -> None:
+        """Release resources (threads, sockets) without producing a result.
+        Called on daemon shutdown if a session is still open. Default no-op."""
+        return None
+
 
 class STTBackend(ABC):
     """One pluggable speech-to-text engine. Concrete backends own their SDK and

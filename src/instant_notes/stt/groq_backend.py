@@ -63,6 +63,7 @@ class GroqBackend(STTBackend):
         self.output_script = output_script
         self.romanize_prompt = romanize_prompt or DEFAULT_ROMANIZE_PROMPT
         self._client: Any = None  # cached Groq client (connection reuse)
+        self._client_lock = threading.Lock()
 
     def is_available(self) -> bool:
         try:
@@ -72,11 +73,14 @@ class GroqBackend(STTBackend):
         return bool(self.api_key)
 
     def _groq(self):
-        if self._client is None:
-            from groq import Groq
+        # Synchronized: batch chunk workers and streaming workers can call this
+        # concurrently; build the client once.
+        with self._client_lock:
+            if self._client is None:
+                from groq import Groq
 
-            self._client = Groq(api_key=self.api_key)
-        return self._client
+                self._client = Groq(api_key=self.api_key)
+            return self._client
 
     def _transcribe_window(self, audio: AudioData) -> str:
         """One Groq transcription call for a single window (honours output_script)."""
@@ -199,23 +203,33 @@ class _GroqStreamingSession(StreamingSession):
             if self._buf_n > 0:
                 self._submit(self._pop_locked(self._buf_n))
         parts: list[str] = []
+        errors = 0
         for i, fut in enumerate(self._futures):
             try:
                 t = fut.result()
             except Exception:
+                errors += 1
                 t = ""
             if i == 0:
                 self._metrics.mark_first_token()
             if t:
                 parts.append(t)
+        self._pool.shutdown(wait=False)
+        # If every window failed, raise so the daemon falls back to batch rather
+        # than silently saving an empty/partial transcript.
+        if self._futures and errors == len(self._futures):
+            raise RuntimeError("all streaming windows failed")
         self._metrics.audio_duration_ms = (
             1000.0 * self._fed / self._sr if self._sr else 0.0
         )
         self._metrics.mark_final()
-        self._pool.shutdown(wait=False)
         return TranscriptionResult(
             text=" ".join(parts).strip(),
             backend=self._b.name,
             metrics=self._metrics,
-            raw={"windows": len(self._futures)},
+            raw={"windows": len(self._futures), "errors": errors},
         )
+
+    def close(self) -> None:
+        """Cancel/cleanup without producing a result (used on daemon shutdown)."""
+        self._pool.shutdown(wait=False, cancel_futures=True)

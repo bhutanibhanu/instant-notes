@@ -39,6 +39,29 @@ def test_delete():
     assert store.search("temp") == []
 
 
+def test_cross_thread_access():
+    """Store created on one thread must be usable from another (daemon creates
+    it on the main thread; hotkey callbacks run on pynput's listener thread)."""
+    import threading
+
+    store = NoteStore(":memory:")
+    store.add_note("from main thread")
+    errors: list[Exception] = []
+
+    def worker():
+        try:
+            store.add_note("from worker thread")
+            assert len(store.recent()) == 2
+            assert len(store.search("worker")) == 1
+        except Exception as e:  # would be sqlite3.ProgrammingError pre-fix
+            errors.append(e)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    assert not errors, errors
+
+
 def test_update_text():
     store = NoteStore(":memory:")
     n = store.add_note("aaj ma eek note")

@@ -39,12 +39,36 @@ def test_groq_streaming_max_cap_windows(monkeypatch):
     monkeypatch.setattr(b, "_transcribe_window", lambda audio: "win")
     sess = b.open_stream(16000)
     rng = np.random.default_rng(0)
-    # 30s of loud noise (never silent) → max-cap at 12s twice + 6s tail = 3
+    # 30s of loud noise (never silent) → max-cap at 14s twice + 2s tail = 3
     for _ in range(60):
         sess.feed((0.5 * rng.standard_normal(int(0.5 * 16000))).astype(np.float32))
     result = sess.finish()
     assert result.raw["windows"] == 3
     assert result.text == "win win win"
+
+
+def test_groq_streaming_all_windows_fail_raises(monkeypatch):
+    """If every window errors, finish() raises so the daemon falls back to batch."""
+    b = GroqBackend(api_key="k")
+
+    def boom(audio):
+        raise RuntimeError("groq down")
+
+    monkeypatch.setattr(b, "_transcribe_window", boom)
+    sess = b.open_stream(16000)
+    rng = np.random.default_rng(3)
+    sess.feed((0.5 * rng.standard_normal(8 * 16000)).astype(np.float32))
+    sess.feed(np.zeros(int(0.4 * 16000), np.float32))  # pause → submit a window
+    with pytest.raises(RuntimeError):
+        sess.finish()
+
+
+def test_groq_streaming_close_no_raise(monkeypatch):
+    b = GroqBackend(api_key="k")
+    monkeypatch.setattr(b, "_transcribe_window", lambda audio: "x")
+    sess = b.open_stream(16000)
+    sess.feed(np.zeros(1000, np.float32))
+    sess.close()  # cleanup must not raise
 
 
 def test_groq_streaming_flushes_on_pause(monkeypatch):

@@ -213,4 +213,18 @@ class InstantNotesDaemon:
             listener.stop()
             if self.recorder.is_recording:
                 self.recorder.stop()
+            # Clean up an in-flight streaming session (thread pool + sockets).
+            if self._session is not None:
+                try:
+                    self._session.close()
+                except Exception:
+                    pass
+                self._session = None
+            # Close any backend that holds connections (pooled httpx, etc.).
+            close = getattr(self._backend, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
             self.store.close()

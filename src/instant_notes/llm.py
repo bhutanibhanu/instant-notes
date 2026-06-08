@@ -11,27 +11,31 @@ daemon doesn't re-handshake on every note.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 _CLIENTS: dict[tuple[str, str], Any] = {}
+_CLIENTS_LOCK = threading.Lock()  # cache shared by query + background refine
 
 
 def _groq_client(api_key: str):
     key = ("groq", api_key)
-    if key not in _CLIENTS:
-        from groq import Groq
+    with _CLIENTS_LOCK:
+        if key not in _CLIENTS:
+            from groq import Groq
 
-        _CLIENTS[key] = Groq(api_key=api_key)
-    return _CLIENTS[key]
+            _CLIENTS[key] = Groq(api_key=api_key)
+        return _CLIENTS[key]
 
 
 def _anthropic_client(api_key: str):
     key = ("anthropic", api_key)
-    if key not in _CLIENTS:
-        import anthropic
+    with _CLIENTS_LOCK:
+        if key not in _CLIENTS:
+            import anthropic
 
-        _CLIENTS[key] = anthropic.Anthropic(api_key=api_key)
-    return _CLIENTS[key]
+            _CLIENTS[key] = anthropic.Anthropic(api_key=api_key)
+        return _CLIENTS[key]
 
 
 def available(cfg) -> bool:
