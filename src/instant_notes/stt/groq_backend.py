@@ -86,29 +86,36 @@ class GroqBackend(STTBackend):
 
     def _transcribe_romanized(self, audio: AudioData) -> TranscriptionResult:
         client = self._groq()
+        chunks = self._chunks(audio)
         metrics = STTMetrics.start(self.name, audio.duration_ms)
-        parts: list[str] = []
-        last_resp: Any = None
-        for i, chunk in enumerate(self._chunks(audio)):
-            resp = client.audio.transcriptions.create(
+
+        def run(chunk: AudioData):
+            return client.audio.transcriptions.create(
                 file=("audio.wav", chunk.to_wav_bytes()),
                 model=self.model,
                 response_format="json",
                 language="en",
                 prompt=self.romanize_prompt,
             )
-            if i == 0:
-                metrics.mark_first_token()
-            last_resp = resp
-            t = (getattr(resp, "text", "") or "").strip()
-            if t:
-                parts.append(t)
+
+        # Chunks are independent (fixed prompt, no sequential dependency), so we
+        # fire them concurrently — total latency is the slowest chunk, not the sum.
+        if len(chunks) == 1:
+            responses = [run(chunks[0])]
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(len(chunks), 8)) as pool:
+                responses = list(pool.map(run, chunks))  # preserves order
+
+        metrics.mark_first_token()
         metrics.mark_final()
+        parts = [(getattr(r, "text", "") or "").strip() for r in responses]
         return TranscriptionResult(
-            text=" ".join(parts).strip(),
+            text=" ".join(p for p in parts if p).strip(),
             backend=self.name,
             metrics=metrics,
-            raw=self._to_raw(last_resp) if last_resp is not None else {},
+            raw=self._to_raw(responses[-1]) if responses else {},
         )
 
     @staticmethod
