@@ -38,7 +38,12 @@ class Config:
     # types notes); "native" = Devanagari for Hindi. Currently honored by Groq.
     output_script: str = "roman"
 
-    # LLM (intent routing + answering)
+    # LLM layer (transcript cleanup + notes query). Default provider is Groq, so
+    # no Anthropic key is needed — it reuses the Groq STT key.
+    llm_provider: str = "groq"           # groq | anthropic
+    llm_model: str = "llama-3.3-70b-versatile"   # groq chat model
+    llm_cleanup: bool = True             # LLM pass to fix romanization/mishears
+    # used only when llm_provider = "anthropic"
     router_model: str = "claude-haiku-4-5"
     answer_model: str = "claude-opus-4-8"
 

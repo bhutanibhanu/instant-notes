@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from instant_notes import llm
+
 from .config import Config
 from .storage import Note, NoteStore
 
@@ -44,7 +46,8 @@ _SEARCH_PATTERNS = [
 ]
 
 _NO_CLIENT_MSG = (
-    "Claude API key not configured — can't answer free-form questions yet."
+    "No LLM configured — set GROQ_API_KEY (or an Anthropic key) to answer "
+    "free-form questions."
 )
 
 
@@ -64,34 +67,25 @@ class NoteAssistant:
         self,
         store: NoteStore,
         cfg: Config,
-        client=None,
+        chat_fn=None,
     ):
         self.store = store
         self.cfg = cfg
-        self._client = client
-        # Track whether we've already attempted lazy construction so we don't
-        # retry an import that failed.
-        self._client_attempted = client is not None
+        # chat_fn(system, user) -> str | None. Defaults to the configured LLM
+        # provider (Groq by default); injectable for tests.
+        self._chat_fn = chat_fn
 
-    # -- client ------------------------------------------------------------
-    @property
-    def client(self):
-        """Return the Claude client, lazily constructing it if possible.
+    # -- llm ---------------------------------------------------------------
+    def _llm_available(self) -> bool:
+        return self._chat_fn is not None or llm.available(self.cfg)
 
-        ``anthropic`` is imported here so module import never requires the
-        package or a key. Returns ``None`` when no key/package is available.
-        """
-        if self._client is None and not self._client_attempted:
-            self._client_attempted = True
-            api_key = getattr(self.cfg, "anthropic_api_key", None)
-            if api_key:
-                try:
-                    import anthropic  # lazy import
-
-                    self._client = anthropic.Anthropic(api_key=api_key)
-                except Exception:
-                    self._client = None
-        return self._client
+    def _chat(self, system: str, user: str) -> str | None:
+        if self._chat_fn is not None:
+            try:
+                return self._chat_fn(system, user)
+            except Exception:
+                return None
+        return llm.chat(system, user, self.cfg)
 
     # -- routing -----------------------------------------------------------
     def handle_command(self, text: str) -> CommandResult:
@@ -161,12 +155,11 @@ class NoteAssistant:
         if not notes:
             return CommandResult(SUMMARIZE, "No notes to summarize.", [])
 
-        client = self.client
-        if client is not None:
-            summary = self._call_claude(
-                "Summarize the following voice notes concisely. Group related "
-                "items and surface anything that looks like a task or "
-                "reminder. Be brief.\n\n" + _format_notes(notes)
+        if self._llm_available():
+            summary = self._chat(
+                "Summarize the user's voice notes concisely. Group related items "
+                "and surface anything that looks like a task or reminder. Be brief.",
+                _format_notes(notes),
             )
             if summary is not None:
                 return CommandResult(SUMMARIZE, summary, notes)
@@ -176,59 +169,26 @@ class NoteAssistant:
 
     def _handle_ask(self, question: str) -> CommandResult:
         notes = self.store.recent(50) if self.store else []
-        client = self.client
-        if client is None:
+        if not self._llm_available():
             return CommandResult(ASK, _NO_CLIENT_MSG, notes)
 
-        prompt = (
-            "You are answering a question about the user's personal voice "
-            "notes. Use ONLY the notes below; if the answer isn't there, say "
-            "so. Be concise.\n\n"
-            f"Question: {question}\n\nNotes:\n{_format_notes(notes)}"
+        answer = self._chat(
+            "You answer questions about the user's personal voice notes. Use ONLY "
+            "the notes provided; if the answer isn't there, say so. Be concise.",
+            f"Question: {question}\n\nNotes:\n{_format_notes(notes)}",
         )
-        answer = self._call_claude(prompt)
         if answer is None:
             return CommandResult(
                 ASK,
-                "Sorry — I couldn't reach Claude to answer that right now.",
+                "Sorry — I couldn't reach the language model to answer that.",
                 notes,
             )
         return CommandResult(ASK, answer, notes)
 
     # -- helpers -----------------------------------------------------------
     def _local_summary(self, notes: list[Note]) -> str:
-        """Fallback summary used when no Claude client is available."""
+        """Fallback summary used when no LLM is available."""
         n = len(notes)
         joined = " ".join(n_.text for n_ in notes)
         snippet = joined[:280] + ("…" if len(joined) > 280 else "")
         return f"You have {n} note{'s' if n != 1 else ''}. {snippet}".strip()
-
-    def _call_claude(self, prompt: str) -> str | None:
-        """Call the Messages API; return text or ``None`` on any error."""
-        client = self.client
-        if client is None:
-            return None
-        try:
-            resp = client.messages.create(
-                model=self.cfg.answer_model,
-                max_tokens=1024,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return self._extract_text(resp)
-        except Exception:
-            return None
-
-    @staticmethod
-    def _extract_text(resp) -> str | None:
-        content = getattr(resp, "content", None)
-        if not content:
-            return None
-        # content is a list of blocks; concatenate text blocks.
-        parts = []
-        for block in content:
-            text = getattr(block, "text", None)
-            if text:
-                parts.append(text)
-        if parts:
-            return "".join(parts).strip()
-        return None

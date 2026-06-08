@@ -1,12 +1,11 @@
 """Tests for the voice-command/LLM layer and notification output.
 
-Uses an in-memory NoteStore and a FAKE Claude client — no real API calls.
+Uses an in-memory NoteStore and a FAKE chat_fn — no real API calls.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 
 import pytest
 
@@ -23,25 +22,6 @@ from instant_notes.notify import notify
 from instant_notes.storage import NoteStore
 
 
-class FakeClient:
-    """Minimal stand-in for anthropic.Anthropic; returns a fixed summary."""
-
-    def __init__(self, text="SUMMARY"):
-        self._text = text
-        self.calls = []
-
-        client = self
-
-        class _Messages:
-            def create(self, **kwargs):
-                client.calls.append(kwargs)
-                return SimpleNamespace(
-                    content=[SimpleNamespace(text=client._text)]
-                )
-
-        self.messages = _Messages()
-
-
 @pytest.fixture
 def store():
     s = NoteStore(":memory:")
@@ -52,8 +32,7 @@ def store():
 @pytest.fixture
 def cfg():
     c = Config()
-    c.answer_model = "claude-opus-4-8"
-    c.router_model = "claude-haiku-4-5"
+    c.groq_api_key = None       # no LLM unless a chat_fn is injected
     c.anthropic_api_key = None
     return c
 
@@ -105,27 +84,39 @@ def test_search(store, cfg):
     assert any("milk" in n.text for n in result.notes)
 
 
-def test_summarize_with_fake_client(store, cfg):
+def test_summarize_with_fake_chat(store, cfg):
     store.add_note("buy milk")
-    fake = FakeClient(text="SUMMARY")
-    asst = NoteAssistant(store, cfg, client=fake)
+    calls = []
 
+    def chat_fn(system, user):
+        calls.append((system, user))
+        return "SUMMARY"
+
+    asst = NoteAssistant(store, cfg, chat_fn=chat_fn)
     result = asst.handle_command("summarize my notes")
 
     assert result.intent == SUMMARIZE
     assert result.response_text == "SUMMARY"
-    assert fake.calls  # Claude was actually called
-    assert fake.calls[0]["model"] == "claude-opus-4-8"
+    assert calls  # the LLM was actually called
+    assert "buy milk" in calls[0][1]  # notes passed to the model
 
 
-def test_ask_without_client(store, cfg):
+def test_ask_without_llm(store, cfg):
     store.add_note("buy milk")
-    asst = NoteAssistant(store, cfg)  # no client, no key
+    asst = NoteAssistant(store, cfg)  # no chat_fn, no keys
 
     result = asst.handle_command("how many errands do I have")
 
     assert result.intent == ASK
-    assert "key not configured" in result.response_text.lower()
+    assert "no llm configured" in result.response_text.lower()
+
+
+def test_ask_with_fake_chat(store, cfg):
+    store.add_note("buy milk")
+    asst = NoteAssistant(store, cfg, chat_fn=lambda s, u: "You have 1 errand.")
+    result = asst.handle_command("how many errands do I have")
+    assert result.intent == ASK
+    assert result.response_text == "You have 1 errand."
 
 
 def test_notify_disabled_prints(capsys):

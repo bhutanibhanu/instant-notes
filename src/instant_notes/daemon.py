@@ -19,6 +19,7 @@ from instant_notes.config import Config
 from instant_notes.hotkeys import HotkeyListener
 from instant_notes.intent import NoteAssistant
 from instant_notes.notify import notify, paste_at_cursor
+from instant_notes.refine import clean_transcript
 from instant_notes.storage import NoteStore
 from instant_notes.stt.base import StreamingSession, STTBackend
 from instant_notes.stt.registry import build_backend
@@ -132,7 +133,7 @@ class InstantNotesDaemon:
         if transcribed is None:
             return
         audio, result = transcribed
-        text = result.text.strip()
+        text = clean_transcript(result.text.strip(), self.cfg)
         if not text:
             notify("Instant Notes", "Heard nothing.", enabled=self.cfg.notify)
             return
