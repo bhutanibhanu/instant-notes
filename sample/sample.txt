@@ -1,9 +1,0 @@
-Namaste everyone, mera naam Bhanu hai aur aaj main ek chhota sa test recording kar raha hoon. Is recording ka purpose hai speech-to-text system ki accuracy aur latency ko evaluate karna. Main intentionally Hindi aur English dono mix karunga taaki Hinglish recognition properly test ho sake.
-
-Kal main subah around 8:30 baje utha, lekin honestly mujhe alarm se pehle hi neend khul gayi thi. Uske baad maine coffee banayi aur apna laptop open karke kuch AI-related work start kiya. Main recently large language models, voice agents, aur real-time communication systems ke baare mein kaafi padh raha hoon. Especially mujhe yeh samajhna interesting lagta hai ki ek voice assistant user ki speech ko kitni jaldi process karke meaningful response generate kar sakta hai.
-
-For example, agar main bolun, “What’s the weather in New York today?” toh ideal system ko pehle speech recognize karni hogi, phir intent samajhna hoga, aur uske baad correct answer generate karna hoga. Agar poora process 5 ya 6 seconds le raha hai toh user experience kaafi slow feel hoga. Lekin agar response 1 second ke andar aa jaye, toh conversation much more natural lagti hai.
-
-Waise accuracy bhi equally important hai. Agar user ne bola “book a flight from Delhi to Mumbai” aur system ne “book a hotel” samajh liya, toh latency fast hone ka koi fayda nahi hai. Real-world applications mein dono cheezein balance karni padti hain.
-
-Ab main kuch random data bol raha hoon: today is Monday, project version is 2.7.1, estimated budget is 15,000 rupees, aur meeting shaam ko 6:45 PM par scheduled hai. Thank you for listening. Yeh recording yahin end hoti hai.

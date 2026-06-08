@@ -30,3 +30,6 @@ samples/*.wav
 node_modules/
 docs/features/*/qa.err
 .claude/settings.local.json
+
+# personal voice samples (keep local)
+sample/
