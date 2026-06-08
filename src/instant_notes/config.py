@@ -31,7 +31,7 @@ class Config:
     default_backend: str = "faster-whisper"
     whisper_model: str = "small"
     whisper_compute_type: str = "int8"  # cpu-friendly default
-    sarvam_model: str = "saarika:v2"
+    sarvam_model: str = "saarika:v2.5"
     groq_model: str = "whisper-large-v3-turbo"
     deepgram_model: str = "nova-3"
 

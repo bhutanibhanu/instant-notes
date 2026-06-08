@@ -6,6 +6,8 @@ package is not installed.
 
 from __future__ import annotations
 
+from typing import Any
+
 from instant_notes.stt.base import (
     AudioData,
     STTBackend,
@@ -22,7 +24,7 @@ class GroqBackend(STTBackend):
     def __init__(self, api_key: str, model: str = "whisper-large-v3-turbo") -> None:
         self.api_key = api_key
         self.model = model
-        self._client = None  # cached Groq client (connection reuse)
+        self._client: Any = None  # cached Groq client (connection reuse)
 
     def is_available(self) -> bool:
         try:

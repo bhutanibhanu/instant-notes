@@ -20,6 +20,20 @@ def audio() -> AudioData:
     return AudioData(samples=np.zeros(16000, np.float32), sample_rate=16000)
 
 
+def test_sarvam_split_chunks_long_audio():
+    """Audio over Sarvam's 30s sync limit is split into <=28s windows."""
+    from instant_notes.stt.sarvam_backend import SARVAM_MAX_CHUNK_S, SarvamBackend
+
+    sr = 16000
+    long_audio = AudioData(samples=np.zeros(int(132 * sr), np.float32), sample_rate=sr)
+    chunks = SarvamBackend._split(long_audio)
+    assert len(chunks) == 5  # ceil(132 / 28)
+    assert all(len(c.samples) <= SARVAM_MAX_CHUNK_S * sr for c in chunks)
+    # short audio is a single chunk (no splitting)
+    short = AudioData(samples=np.zeros(int(10 * sr), np.float32), sample_rate=sr)
+    assert len(SarvamBackend._split(short)) == 1
+
+
 # --------------------------------------------------------------------------- #
 # Sarvam — fake httpx.Client.post
 # --------------------------------------------------------------------------- #
