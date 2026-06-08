@@ -40,6 +40,16 @@ def test_groq_default_native_mode():
     assert b2.romanize_prompt  # has a default romanize prompt
 
 
+def test_sarvam_split_text_for_transliterate():
+    from instant_notes.stt.sarvam_backend import SarvamBackend
+
+    text = " ".join(["word"] * 500)  # ~2500 chars
+    chunks = SarvamBackend._split_text(text, 900)
+    assert len(chunks) >= 3
+    assert all(len(c) <= 900 for c in chunks)
+    assert SarvamBackend._split_text("short text", 900) == ["short text"]
+
+
 def test_sarvam_split_chunks_long_audio():
     """Audio over Sarvam's 30s sync limit is split into <=28s windows."""
     from instant_notes.stt.sarvam_backend import SARVAM_MAX_CHUNK_S, SarvamBackend

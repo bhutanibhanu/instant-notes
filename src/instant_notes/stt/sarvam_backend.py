@@ -18,27 +18,37 @@ from instant_notes.stt.base import (
 )
 
 SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
+SARVAM_TRANSLITERATE_URL = "https://api.sarvam.ai/transliterate"
 # Sarvam's sync endpoint rejects audio longer than 30s. We chunk anything longer
 # into windows safely under that and concatenate. (Real voice notes are short, so
 # this only kicks in for long dictation / the bench sample.)
 SARVAM_MAX_CHUNK_S = 28.0
+# Transliterate endpoint input cap (chars); we split longer text on spaces.
+SARVAM_TRANSLIT_MAX_CHARS = 900
 
 
 class SarvamBackend(STTBackend):
-    """Sarvam AI cloud STT (``saarika`` family)."""
+    """Sarvam AI cloud STT (``saarika`` family).
+
+    ``output_script="roman"`` pipes the (Devanagari) transcript through Sarvam's
+    transliterate API with ``spoken_form=True`` to produce natural romanized
+    Hinglish — proper schwa deletion ("naam", "aur") and English words recovered.
+    """
 
     name = "sarvam"
 
     def __init__(
         self,
         api_key: str,
-        model: str = "saarika:v2",
+        model: str = "saarika:v2.5",
         language_code: str = "unknown",
+        output_script: str = "native",
     ) -> None:
         self.api_key = api_key
         self.model = model
-        # saarika:v2 requires language_code; "unknown" enables auto-detection.
+        # saarika requires language_code; "unknown" enables auto-detection.
         self.language_code = language_code
+        self.output_script = output_script
         # A single pooled client is reused across calls so the daemon doesn't
         # pay a fresh TLS handshake per note (latency).
         self._client: httpx.Client | None = None
@@ -71,9 +81,12 @@ class SarvamBackend(STTBackend):
                 t = (payload.get("transcript") or "").strip()
                 if t:
                     parts.append(t)
-        metrics.mark_final()
 
         text = " ".join(parts).strip()
+        if self.output_script == "roman" and text:
+            text = self._romanize(text)
+        metrics.mark_final()
+
         raw = last_payload if isinstance(last_payload, dict) else {"raw": last_payload}
         return TranscriptionResult(
             text=text,
@@ -81,6 +94,47 @@ class SarvamBackend(STTBackend):
             metrics=metrics,
             raw=raw,
         )
+
+    def _romanize(self, text: str) -> str:
+        """Transliterate Devanagari Hinglish -> natural romanized Hinglish via
+        Sarvam's transliterate API (chunked on spaces under the input cap)."""
+        headers = {
+            "api-subscription-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        out: list[str] = []
+        for chunk in self._split_text(text, SARVAM_TRANSLIT_MAX_CHARS):
+            resp = self._http().post(
+                SARVAM_TRANSLITERATE_URL,
+                headers=headers,
+                json={
+                    "input": chunk,
+                    "source_language_code": "hi-IN",
+                    "target_language_code": "en-IN",
+                    "spoken_form": True,
+                },
+            )
+            resp.raise_for_status()
+            payload = self._parse_json(resp)
+            if isinstance(payload, dict):
+                out.append(payload.get("transliterated_text") or "")
+        return " ".join(p for p in out if p).strip()
+
+    @staticmethod
+    def _split_text(text: str, max_chars: int) -> list[str]:
+        words = text.split()
+        chunks: list[str] = []
+        buf = ""
+        for w in words:
+            if len(buf) + len(w) + 1 > max_chars:
+                if buf:
+                    chunks.append(buf)
+                buf = w
+            else:
+                buf = (buf + " " + w).strip()
+        if buf:
+            chunks.append(buf)
+        return chunks or [text]
 
     def _transcribe_chunk(self, audio: AudioData) -> Any:
         files = {"file": ("audio.wav", audio.to_wav_bytes(), "audio/wav")}
