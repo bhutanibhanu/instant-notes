@@ -33,17 +33,30 @@ def test_groq_romanize_chunks_long_audio():
     assert len(GroqBackend._chunks(short)) == 1
 
 
-def test_groq_streaming_windows(monkeypatch):
-    """Streaming session windows audio fed during recording; finish flushes tail."""
+def test_groq_streaming_max_cap_windows(monkeypatch):
+    """Continuous (non-silent) audio is force-flushed at the MAX window cap."""
     b = GroqBackend(api_key="k")
     monkeypatch.setattr(b, "_transcribe_window", lambda audio: "win")
     sess = b.open_stream(16000)
-    # feed 20s in 0.5s chunks → two full 8s windows + a 4s tail at finish = 3
-    for _ in range(40):
-        sess.feed(np.zeros(int(0.5 * 16000), np.float32))
+    rng = np.random.default_rng(0)
+    # 30s of loud noise (never silent) → max-cap at 12s twice + 6s tail = 3
+    for _ in range(60):
+        sess.feed((0.5 * rng.standard_normal(int(0.5 * 16000))).astype(np.float32))
     result = sess.finish()
     assert result.raw["windows"] == 3
     assert result.text == "win win win"
+
+
+def test_groq_streaming_flushes_on_pause(monkeypatch):
+    """A silent tail after enough audio flushes a pause-aligned window."""
+    b = GroqBackend(api_key="k")
+    monkeypatch.setattr(b, "_transcribe_window", lambda audio: "seg")
+    sess = b.open_stream(16000)
+    rng = np.random.default_rng(1)
+    sess.feed((0.5 * rng.standard_normal(8 * 16000)).astype(np.float32))  # 8s speech
+    sess.feed(np.zeros(int(0.4 * 16000), np.float32))  # 0.4s silence → pause flush
+    # one window already flushed at the pause (>= 7s min + silent tail)
+    assert len(sess._futures) == 1
 
 
 def test_groq_default_native_mode():

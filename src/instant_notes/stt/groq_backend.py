@@ -37,7 +37,13 @@ DEFAULT_ROMANIZE_PROMPT = (
     "Maine socha ki aaj kuch test karu."
 )
 ROMANIZE_CHUNK_S = 20.0   # window for re-priming the prompt (batch romanized)
-GROQ_STREAM_WINDOW_S = 8.0  # window size for transcribe-while-recording
+# Streaming windows are flushed at a natural pause once >= MIN, or forced at MAX
+# (hard cap to bound latency). Pause-aligned cuts avoid slicing mid-word, which
+# hurts accuracy at window boundaries.
+STREAM_MIN_WINDOW_S = 7.0
+STREAM_MAX_WINDOW_S = 14.0
+STREAM_TAIL_MS = 300.0      # trailing audio inspected for a pause
+STREAM_SILENCE_RMS = 0.015  # below this = silence
 
 
 class GroqBackend(STTBackend):
@@ -144,7 +150,9 @@ class _GroqStreamingSession(StreamingSession):
     def __init__(self, backend: GroqBackend, sample_rate: int) -> None:
         self._b = backend
         self._sr = sample_rate
-        self._win = int(GROQ_STREAM_WINDOW_S * sample_rate)
+        self._min = int(STREAM_MIN_WINDOW_S * sample_rate)
+        self._max = int(STREAM_MAX_WINDOW_S * sample_rate)
+        self._tail = int(STREAM_TAIL_MS / 1000.0 * sample_rate)
         self._buf: list[np.ndarray] = []
         self._buf_n = 0
         self._fed = 0
@@ -159,8 +167,21 @@ class _GroqStreamingSession(StreamingSession):
             self._fed += arr.size
             self._buf.append(arr)
             self._buf_n += arr.size
-            while self._buf_n >= self._win:
-                self._submit(self._pop_locked(self._win))
+            # Hard cap: never let a window grow past MAX (bounds latency).
+            while self._buf_n >= self._max:
+                self._submit(self._pop_locked(self._max))
+            # Pause-aligned flush: once we have enough audio and the tail is
+            # silent, cut here so windows end on phrase boundaries.
+            if self._buf_n >= self._min and self._trailing_silence_locked():
+                self._submit(self._pop_locked(self._buf_n))
+
+    def _trailing_silence_locked(self) -> bool:
+        data = self._buf[-1] if len(self._buf) == 1 else np.concatenate(self._buf)
+        tail = data[-self._tail :]
+        if tail.size == 0:
+            return False
+        rms = float(np.sqrt(np.mean(tail.astype(np.float64) ** 2)))
+        return rms < STREAM_SILENCE_RMS
 
     def _pop_locked(self, n: int) -> np.ndarray:
         data = np.concatenate(self._buf) if self._buf else np.zeros(0, np.float32)
