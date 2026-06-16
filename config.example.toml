@@ -2,7 +2,7 @@
 
 [hotkeys]
 # pynput format. Toggle to start/stop.
-capture_hotkey = "<cmd>+<shift>+space"   # dictate a note
+capture_hotkey = "<cmd>+<shift>+<space>" # dictate a note (named keys bracketed)
 command_hotkey = "<cmd>+<shift>+a"       # speak a query
 
 [stt]
