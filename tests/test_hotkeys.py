@@ -1,10 +1,13 @@
 """Hotkey validation — guards the 'space' vs '<space>' class of config bug."""
 
 import pytest
-from pynput.keyboard import HotKey
 
-from instant_notes.config import Config
-from instant_notes.hotkeys import HotkeyListener
+# pynput needs a live input backend (an X display on Linux), so headless CI skips
+# these instead of erroring at collection; they still run on the Mac.
+HotKey = pytest.importorskip("pynput.keyboard", exc_type=ImportError).HotKey
+
+from instant_notes.config import Config  # noqa: E402
+from instant_notes.hotkeys import HotkeyListener  # noqa: E402
 
 
 def test_default_hotkeys_parse():
