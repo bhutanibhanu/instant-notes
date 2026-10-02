@@ -25,6 +25,7 @@ from instant_notes.refine import clean_transcript
 from instant_notes.storage import NoteStore
 from instant_notes.stt.base import StreamingSession, STTBackend
 from instant_notes.stt.registry import build_backend
+from instant_notes.timing import Event, tracer
 
 # recording-mode flags
 _IDLE = None
@@ -49,6 +50,9 @@ class InstantNotesDaemon:
         # Live streaming session for the in-flight recording, if the backend
         # supports streaming. None means we're on the batch path.
         self._session: StreamingSession | None = None
+        # Latency-trace id for the in-flight dictation (carried on the daemon,
+        # not a global). Set at record start, finalized after cleanup.
+        self._sid: str | None = None
 
     # --- backend ----------------------------------------------------------
     @property
@@ -70,6 +74,7 @@ class InstantNotesDaemon:
         feed audio to it during recording; otherwise plain batch recording.
 
         On any failure opening the stream we log and fall back to batch."""
+        self._sid = tracer.start()
         self._session = None
         backend = self.backend
         if backend is not None and backend.supports_streaming():
@@ -94,6 +99,7 @@ class InstantNotesDaemon:
         self._session = None
         audio = self.recorder.stop()
         stopped_ts = time.perf_counter()  # the moment the user stopped talking
+        tracer.mark(self._sid, Event.STOP)
         backend = self.backend
         if backend is None:
             if session is not None:
@@ -109,14 +115,18 @@ class InstantNotesDaemon:
             return None
         if session is not None:
             try:
+                tracer.mark(self._sid, Event.STT_REQUEST)
                 result = session.finish()
+                tracer.mark(self._sid, Event.STT_DONE)
                 result.metrics.recording_stopped_ts = stopped_ts
                 return audio, result
             except Exception as exc:  # noqa: BLE001 - fall back to batch
                 print(f"[instant-notes] streaming finish failed, batch fallback: {exc}")
         # Batch path: trim dead air before sending (fewer bytes, less hallucination).
         clip = trim_silence(audio) if self.cfg.trim_silence else audio
+        tracer.mark(self._sid, Event.STT_REQUEST)
         result = backend.transcribe(clip)
+        tracer.mark(self._sid, Event.STT_DONE)
         result.metrics.recording_stopped_ts = stopped_ts
         return audio, result
 
@@ -132,12 +142,15 @@ class InstantNotesDaemon:
 
         self._mode = _IDLE
         transcribed = self._transcribe()
+        sid, self._sid = self._sid, None  # take ownership of the trace id
         if transcribed is None:
+            tracer.finalize(sid)
             return
         audio, result = transcribed
         text = result.text.strip()
         if not text:
             notify("Instant Notes", "Heard nothing.", enabled=self.cfg.notify)
+            tracer.finalize(sid)
             return
         # Save + surface the raw transcript immediately (instant feel), then
         # refine it in the background and update the note when cleanup returns.
@@ -148,25 +161,31 @@ class InstantNotesDaemon:
             latency_ms=result.metrics.total_ms,
         )
         notify("Note saved", text[:80], enabled=self.cfg.notify)
+        tracer.mark(sid, Event.DISPLAYED)
         if self.cfg.paste_at_cursor:
             paste_at_cursor(text)
+            tracer.mark(sid, Event.PASTED)
         if self.cfg.llm_cleanup and llm.available(self.cfg):
             threading.Thread(
-                target=self._refine_note, args=(note.id, text), daemon=True
+                target=self._refine_note, args=(note.id, text, sid), daemon=True
             ).start()
+        else:
+            tracer.finalize(sid)
 
-    def _refine_note(self, note_id: int, raw: str) -> None:
+    def _refine_note(self, note_id: int, raw: str, sid: str | None = None) -> None:
         """Background: LLM-clean the transcript and update the saved note. Uses
         its own DB connection (SQLite connections aren't shared across threads)."""
+        tracer.mark(sid, Event.CLEANUP_START)
         cleaned = clean_transcript(raw, self.cfg)
-        if not cleaned or cleaned == raw:
-            return
-        store = NoteStore(self.cfg.db_path)
-        try:
-            store.update_text(note_id, cleaned)
-        finally:
-            store.close()
-        notify("Note refined", cleaned[:80], enabled=self.cfg.notify)
+        if cleaned and cleaned != raw:
+            store = NoteStore(self.cfg.db_path)
+            try:
+                store.update_text(note_id, cleaned)
+            finally:
+                store.close()
+            notify("Note refined", cleaned[:80], enabled=self.cfg.notify)
+        tracer.mark(sid, Event.CLEANUP_DONE)
+        tracer.finalize(sid)
 
     # --- command ----------------------------------------------------------
     def _toggle_command(self) -> None:
@@ -180,16 +199,20 @@ class InstantNotesDaemon:
 
         self._mode = _IDLE
         transcribed = self._transcribe()
+        sid, self._sid = self._sid, None
         if transcribed is None:
+            tracer.finalize(sid)
             return
         _audio, result = transcribed
         text = result.text.strip()
         if not text:
             notify("Instant Notes", "Heard nothing.", enabled=self.cfg.notify)
+            tracer.finalize(sid)
             return
         command_result = self.assistant.handle_command(text)
         notify("Notes", command_result.response_text, enabled=self.cfg.notify)
         print(command_result.response_text)
+        tracer.finalize(sid)
 
     # --- lifecycle --------------------------------------------------------
     def run(self) -> None:
@@ -220,6 +243,9 @@ class InstantNotesDaemon:
                 except Exception:
                     pass
                 self._session = None
+            # Finalize a dictation trace abandoned mid-recording (no leak).
+            tracer.finalize(self._sid)
+            self._sid = None
             # Close any backend that holds connections (pooled httpx, etc.).
             close = getattr(self._backend, "close", None)
             if callable(close):

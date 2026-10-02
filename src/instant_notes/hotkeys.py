@@ -27,8 +27,21 @@ class HotkeyListener:
         self._listener: Any = None
 
     def start(self) -> None:
-        """Start listening on a background thread."""
+        """Start listening on a background thread.
+
+        Validates each hotkey string first so one bad binding (e.g. ``space``
+        instead of ``<space>``) gives a clear error naming the offender, instead
+        of an opaque ``ValueError`` that takes the whole daemon down."""
         from pynput import keyboard  # lazy import
+
+        for combo in self.bindings:
+            try:
+                keyboard.HotKey.parse(combo)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid hotkey {combo!r}: {exc}. Named keys must be "
+                    f"bracketed, e.g. '<cmd>+<shift>+<space>'."
+                ) from exc
 
         self._listener = keyboard.GlobalHotKeys(self.bindings)
         self._listener.start()

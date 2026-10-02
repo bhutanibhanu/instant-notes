@@ -23,8 +23,8 @@ DEFAULT_DB_PATH = Path.home() / ".local" / "share" / "instant-notes" / "notes.db
 
 @dataclass
 class Config:
-    # hotkeys (pynput format, e.g. "<cmd>+<shift>+space")
-    capture_hotkey: str = "<cmd>+<shift>+space"
+    # hotkeys (pynput format; named keys MUST be bracketed, e.g. "<space>")
+    capture_hotkey: str = "<cmd>+<shift>+<space>"
     command_hotkey: str = "<cmd>+<shift>+a"
 
     # STT
